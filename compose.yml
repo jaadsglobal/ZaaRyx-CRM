@@ -1,0 +1,30 @@
+services:
+  zaaryx-crm:
+    build:
+      context: .
+    image: zaaryx-crm:local
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: ${APP_URL}
+      DATABASE_PATH: /data/zaaryx.db
+      MAIL_FROM: ${MAIL_FROM}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      JSON_BODY_LIMIT: ${JSON_BODY_LIMIT:-1mb}
+      STRICT_PRODUCTION_CHECKS: ${STRICT_PRODUCTION_CHECKS:-true}
+      RELEASE_VERSION: ${RELEASE_VERSION:-docker-local}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    volumes:
+      - zaaryx_data:/data
+
+volumes:
+  zaaryx_data:

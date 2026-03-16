@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.gitignore
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+.DS_Store
+coverage
+tmp
+.vercel
