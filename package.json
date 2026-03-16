@@ -10,6 +10,7 @@
     "preview": "npm run build && npm run start",
     "preview:static": "vite preview",
     "preflight": "NODE_ENV=production node --import ./node_modules/tsx/dist/esm/index.mjs ./scripts/preflight.ts",
+    "db:import-dump": "node --import ./node_modules/tsx/dist/esm/index.mjs ./scripts/import-sql-dump.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },

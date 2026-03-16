@@ -53,6 +53,28 @@ Usa [.env.staging.example](/Users/juanguillermomarquezperez/Downloads/zaaryx-glo
    - login freelance
    - persistencia tras reinicio del servicio
 
+### Pasar la base local actual a staging
+
+Si el `staging` arranca con una base vacía o sin tus demos de `cliente` y `freelance`, la forma más segura de alinearlo con local es restaurar un volcado SQL de tu base actual.
+
+1. Crea un backup local de `zaaryx.db`
+2. Exporta el dump SQL:
+   `sqlite3 zaaryx.db .dump > /tmp/zaaryx-staging.sql`
+3. En Render, añade ese dump como `Secret File`
+   - nombre sugerido: `staging-seed.sql`
+   - ruta final: `/etc/secrets/staging-seed.sql`
+4. Abre la `Shell` del servicio `zaaryx-crm-staging`
+5. Ejecuta la importación sobre el disco persistente:
+   `npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/zaaryx.db`
+6. Reinicia el servicio desde Render
+7. Verifica de nuevo:
+   - login admin
+   - `cliente.demo@zaaryx.local`
+   - `freelance.demo@zaaryx.local`
+   - `/healthz`
+
+El script de importación crea una copia previa del fichero remoto antes de sustituirlo, así que el staging no se pisa sin respaldo.
+
 ### Cuándo cambiar a `/readyz`
 
 Mantén `/healthz` en staging mientras faltan `SMTP` o `APP_URL` definitivos. Cuando staging tenga configuración completa y estable, conviene mover el health check a `/readyz` y activar `STRICT_PRODUCTION_CHECKS=true` en producción.
