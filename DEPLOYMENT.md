@@ -5,9 +5,9 @@
 La opción más segura para el estado actual del CRM es:
 
 1. GitHub como repositorio principal
-2. Despliegue del backend completo con Docker
+2. Staging del backend completo con Docker
 3. Hosting con volumen persistente real para SQLite
-4. Primero staging y después producción
+4. Después producción, sólo cuando staging esté validado
 
 Plataformas válidas para este estado del proyecto:
 
@@ -17,6 +17,45 @@ Plataformas válidas para este estado del proyecto:
 - VPS con Docker
 
 No se recomienda desplegar el backend actual en Vercel como primer destino porque esta app usa SQLite y necesita persistencia real en `DATABASE_PATH`. Vercel puede servir bien un frontend estático, pero no es la base correcta para este backend monolítico sin migrarlo antes a Postgres.
+
+## Primer staging recomendado: Render
+
+El repositorio incluye [render.yaml](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/render.yaml) para crear una instancia de staging con:
+
+- Docker
+- disco persistente en `/data`
+- health check inicial en `/healthz`
+- despliegue automático sólo si GitHub Actions pasa
+
+### Variables para staging
+
+Usa [.env.staging.example](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/.env.staging.example) como referencia. En staging se deja `STRICT_PRODUCTION_CHECKS=false` para no bloquear el primer despliegue si todavía no has conectado SMTP o Gemini.
+
+### Pasos en Render
+
+1. Entra en Render y crea un `Blueprint` desde tu repo de GitHub
+2. Selecciona este repositorio y usa `render.yaml`
+3. Revisa el servicio `zaaryx-crm-staging`
+4. Completa como mínimo:
+   - `APP_URL`
+   - `MAIL_FROM`
+5. Si ya tienes correo real, completa también:
+   - `SMTP_HOST`
+   - `SMTP_PORT`
+   - `SMTP_SECURE`
+   - `SMTP_USER`
+   - `SMTP_PASS`
+6. Lanza el deploy
+7. Verifica:
+   - `GET /healthz`
+   - login admin
+   - login cliente
+   - login freelance
+   - persistencia tras reinicio del servicio
+
+### Cuándo cambiar a `/readyz`
+
+Mantén `/healthz` en staging mientras faltan `SMTP` o `APP_URL` definitivos. Cuando staging tenga configuración completa y estable, conviene mover el health check a `/readyz` y activar `STRICT_PRODUCTION_CHECKS=true` en producción.
 
 ## Variables mínimas
 

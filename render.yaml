@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: zaaryx-crm-staging
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: checksPass
+    healthCheckPath: /healthz
+    disk:
+      name: zaaryx-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_PATH
+        value: /data/zaaryx.db
+      - key: APP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: JSON_BODY_LIMIT
+        value: 1mb
+      - key: STRICT_PRODUCTION_CHECKS
+        value: "false"
+      - key: RELEASE_VERSION
+        value: render-staging
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
