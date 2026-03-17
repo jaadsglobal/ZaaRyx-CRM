@@ -377,7 +377,7 @@ export const AccountSecurityPortal: React.FC<AccountSecurityPortalProps> = ({
         type: 'text/plain;charset=utf-8',
       });
       const url = URL.createObjectURL(blob);
-      triggerClientDownload(url, 'jaadsglobal-2fa-backup-codes.txt', () => URL.revokeObjectURL(url));
+      triggerClientDownload(url, 'zaaryx-2fa-backup-codes.txt', () => URL.revokeObjectURL(url));
       setMessage('Códigos de respaldo descargados.');
     } finally {
       setTwoFactorBusy(null);

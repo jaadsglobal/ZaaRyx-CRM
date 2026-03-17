@@ -90,8 +90,8 @@ const IntegrationsManager = lazy(() =>
 const TeamManager = lazy(() =>
   import('./components/TeamManager').then((module) => ({ default: module.TeamManager })),
 );
-const JaaDsGlobalAI = lazy(() =>
-  import('./components/JaaDsGlobalAI').then((module) => ({ default: module.JaaDsGlobalAI })),
+const ZaaRyxAI = lazy(() =>
+  import('./components/ZaaRyxAI').then((module) => ({ default: module.ZaaRyxAI })),
 );
 const SettingsManager = lazy(() =>
   import('./components/SettingsManager').then((module) => ({ default: module.SettingsManager })),
@@ -843,7 +843,7 @@ export default function App() {
       case 'team':
         return <TeamManager />;
       case 'ai':
-        return <JaaDsGlobalAI accessibleSections={accessibleSections} />;
+        return <ZaaRyxAI accessibleSections={accessibleSections} />;
       case 'settings':
         return isClientPortalUser || isFreelancerPortalUser ? (
           <AccountSecurityPortal
@@ -1185,7 +1185,7 @@ export default function App() {
                   }))
                 }
                 className="w-full glass-input"
-                placeholder="admin@jaadsglobal.com"
+                placeholder="admin@zaaryx.com"
               />
             </div>
 
@@ -1299,7 +1299,7 @@ export default function App() {
               ¿Olvidaste tu contraseña?
             </button>
             <p className="text-xs text-center text-white/35">
-              Acceso inicial local: `admin@jaadsglobal.com` / `admin123`
+              Acceso inicial local: `admin@zaaryx.com` / `admin123`
             </p>
           </>
         )}

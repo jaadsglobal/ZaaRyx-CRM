@@ -40,7 +40,7 @@ const menuItems = [
   { id: 'reports', label: 'Reportes', icon: BarChart3 },
   { id: 'billing', label: 'Facturación', icon: CreditCard },
   { id: 'integrations', label: 'Integraciones', icon: Workflow },
-  { id: 'ai', label: 'JaaDs Global AI', icon: Zap },
+  { id: 'ai', label: 'ZaaRyx AI', icon: Zap },
   { id: 'team', label: 'Equipo', icon: MessageSquare },
   { id: 'settings', label: 'Ajustes', icon: Settings },
 ];
@@ -82,9 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         />
         <div>
           <h1 className="font-bold text-xl tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-            JaaDs Global
+            ZaaRyx
           </h1>
-          <p className="text-[10px] uppercase tracking-[0.2em] text-brand-cyan font-semibold">CRM</p>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-brand-cyan font-semibold">Global CRM</p>
         </div>
       </div>
 

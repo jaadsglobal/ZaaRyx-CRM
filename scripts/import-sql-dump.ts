@@ -10,7 +10,7 @@ const usage = () => {
       "  npm run db:import-dump -- <ruta-dump.sql> [ruta-db-destino]",
       "",
       "Ejemplo:",
-      "  npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/jaadsglobal.db",
+      "  npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/zaaryx.db",
     ].join("\n"),
   );
 };
@@ -44,7 +44,7 @@ const moveSqliteArtifacts = (sourceDatabasePath: string, destinationDatabasePath
 };
 
 const resolveDatabasePath = (value?: string | null) => {
-  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "jaadsglobal.db";
+  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "zaaryx.db";
   return path.isAbsolute(configuredPath)
     ? configuredPath
     : path.join(process.cwd(), configuredPath);

@@ -14,7 +14,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DATABASE_PATH=/data/jaadsglobal.db
+ENV DATABASE_PATH=/data/zaaryx.db
 
 COPY --from=build /app /app
 

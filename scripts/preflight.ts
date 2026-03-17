@@ -72,7 +72,7 @@ const isTrustedLocalAppUrl = (appUrl?: string | null) => {
 };
 
 const resolveDatabasePath = (value?: string | null) => {
-  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "jaadsglobal.db";
+  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "zaaryx.db";
 
   return path.isAbsolute(configuredPath)
     ? configuredPath
@@ -94,7 +94,7 @@ const mailFrom =
   process.env.MAIL_FROM?.trim() ||
   process.env.SMTP_FROM?.trim() ||
   process.env.SMTP_USER?.trim() ||
-  "no-reply@jaadsglobal.local";
+  "no-reply@zaaryx.local";
 const trustProxyEnabled = parseBooleanEnvFlag(process.env.TRUST_PROXY);
 const secureCookiesEnabled = parseBooleanEnvFlag(process.env.SECURE_COOKIES);
 const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());

@@ -13,7 +13,7 @@ export interface AIAutomationRunFilterPreset {
   trigger_key?: AiTriggerSettingKey;
 }
 
-export const AI_RUN_FILTER_PRESET_STORAGE_KEY = 'jaadsglobal_ai_run_filter_preset';
+export const AI_RUN_FILTER_PRESET_STORAGE_KEY = 'zaaryx_ai_run_filter_preset';
 
 export const saveAIAutomationRunFilterPreset = (preset: AIAutomationRunFilterPreset) => {
   if (typeof window === 'undefined') {

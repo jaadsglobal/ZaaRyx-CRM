@@ -22,7 +22,7 @@ function parseBooleanEnvFlag(value?: string) {
 }
 
 const resolveDatabasePath = (value?: string | null) => {
-  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "jaadsglobal.db";
+  const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "zaaryx.db";
 
   return path.isAbsolute(configuredPath)
     ? configuredPath
@@ -1470,7 +1470,7 @@ interface AIAutomationRunParams {
 type ArchiveScope = "active" | "archived" | "all";
 
 const defaultAppSettings: AppSettingsPayload = {
-  agency_name: "JaaDs Global",
+  agency_name: "ZaaRyx Global",
   subscription_plan: "pro",
   timezone: "Europe/Madrid",
   currency: "EUR",
@@ -1616,9 +1616,9 @@ const teamOnboardingStepTemplates: TeamOnboardingStepTemplate[] = [
 ];
 
 const aiSystemInstruction =
-  "Eres JaaDs Global AI, un estratega senior de marketing digital, automatización y operaciones para agencias. Responde en español, con foco práctico, claridad ejecutiva y orientación a resultados.";
+  "Eres ZaaRyx AI, un estratega senior de marketing digital, automatización y operaciones para agencias. Responde en español, con foco práctico, claridad ejecutiva y orientación a resultados.";
 
-const SESSION_COOKIE_NAME = "jaadsglobal_session";
+const SESSION_COOKIE_NAME = "zaaryx_session";
 const PASSWORD_SCHEME = "scrypt";
 const PASSWORD_RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 const PASSWORD_RESET_RESEND_COOLDOWN_MS = 90 * 1000;
@@ -2666,7 +2666,7 @@ const parseStoredStringArray = (value?: string | null) => {
 const serializeStoredStringArray = (values: string[]) => JSON.stringify(values);
 
 const getTwoFactorIssuer = (agencyName?: string | null) =>
-  agencyName?.trim() || process.env.TWO_FACTOR_ISSUER?.trim() || "JaaDs Global CRM";
+  agencyName?.trim() || process.env.TWO_FACTOR_ISSUER?.trim() || "ZaaRyx Global CRM";
 
 const getTwoFactorSetupPayload = async ({
   email,
@@ -3008,7 +3008,7 @@ const getMailFromAddress = () =>
   process.env.MAIL_FROM?.trim() ||
   process.env.SMTP_FROM?.trim() ||
   process.env.SMTP_USER?.trim() ||
-  "no-reply@jaadsglobal.local";
+  "no-reply@zaaryx.local";
 
 const buildPasswordResetUrl = (token: string, req?: express.Request) => {
   const publicAppUrl = getPublicAppUrl(req);
@@ -3591,7 +3591,7 @@ const getRuntimeReadiness = (): RuntimeReadinessReport => {
       label: "Proveedor IA",
       detail: geminiConfigured
         ? "GEMINI_API_KEY está configurada."
-        : "No hay GEMINI_API_KEY. JaaDs Global AI seguirá con fallback local.",
+        : "No hay GEMINI_API_KEY. ZaaRyx AI seguirá con fallback local.",
     },
   ];
 
@@ -4602,12 +4602,12 @@ if (agencyCount.count === 0) {
     .run(defaultAppSettings.agency_name, defaultAppSettings.subscription_plan).lastInsertRowid;
   db
     .prepare("INSERT INTO users (email, password, name, role, agency_id) VALUES (?, ?, ?, ?, ?)")
-    .run("admin@jaadsglobal.com", hashPassword("admin123"), "Admin User", "Administrador", agencyId);
+    .run("admin@zaaryx.com", hashPassword("admin123"), "Admin User", "Administrador", agencyId);
   const insertUser = db.prepare(
     "INSERT INTO users (email, password, name, role, agency_id, status) VALUES (?, ?, ?, ?, ?, ?)",
   );
   insertUser.run(
-    "alex@jaadsglobal.com",
+    "alex@zaaryx.com",
     hashPassword("temp123"),
     "Alex Rivera",
     "Media Buyer",
@@ -4615,7 +4615,7 @@ if (agencyCount.count === 0) {
     "meeting",
   );
   insertUser.run(
-    "sofia@jaadsglobal.com",
+    "sofia@zaaryx.com",
     hashPassword("temp123"),
     "Sofia Chen",
     "Project Manager",
@@ -4623,7 +4623,7 @@ if (agencyCount.count === 0) {
     "online",
   );
   insertUser.run(
-    "marcus@jaadsglobal.com",
+    "marcus@zaaryx.com",
     hashPassword("temp123"),
     "Marcus Thorne",
     "AI Specialist",
@@ -10754,7 +10754,7 @@ if (defaultAgency) {
   );
 
   insertTeamMember.run(
-    "alex@jaadsglobal.com",
+    "alex@zaaryx.com",
     hashPassword("temp123"),
     "Alex Rivera",
     "Media Buyer",
@@ -10762,7 +10762,7 @@ if (defaultAgency) {
     "meeting",
   );
   insertTeamMember.run(
-    "sofia@jaadsglobal.com",
+    "sofia@zaaryx.com",
     hashPassword("temp123"),
     "Sofia Chen",
     "Project Manager",
@@ -10770,7 +10770,7 @@ if (defaultAgency) {
     "online",
   );
   insertTeamMember.run(
-    "marcus@jaadsglobal.com",
+    "marcus@zaaryx.com",
     hashPassword("temp123"),
     "Marcus Thorne",
     "AI Specialist",
@@ -10951,7 +10951,7 @@ if (defaultAgency) {
       `,
     ).run(
       "Laura Vega",
-      "laura.freelance@jaadsglobal.com",
+      "laura.freelance@zaaryx.com",
       "Diseño Creativo",
       38,
       "EUR",

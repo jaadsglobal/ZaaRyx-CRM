@@ -20,7 +20,7 @@ No se recomienda desplegar el backend actual en Vercel como primer destino porqu
 
 ## Primer staging recomendado: Render
 
-El repositorio incluye [render.yaml](./render.yaml) para crear una instancia de staging con:
+El repositorio incluye [render.yaml](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/render.yaml) para crear una instancia de staging con:
 
 - Docker
 - disco persistente en `/data`
@@ -29,13 +29,13 @@ El repositorio incluye [render.yaml](./render.yaml) para crear una instancia de 
 
 ### Variables para staging
 
-Usa [.env.staging.example](./.env.staging.example) como referencia. En staging se deja `STRICT_PRODUCTION_CHECKS=false` para no bloquear el primer despliegue si todavía no has conectado SMTP o Gemini.
+Usa [.env.staging.example](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/.env.staging.example) como referencia. En staging se deja `STRICT_PRODUCTION_CHECKS=false` para no bloquear el primer despliegue si todavía no has conectado SMTP o Gemini.
 
 ### Pasos en Render
 
 1. Entra en Render y crea un `Blueprint` desde tu repo de GitHub
 2. Selecciona este repositorio y usa `render.yaml`
-3. Revisa el servicio `jaadsglobal-crm-staging`
+3. Revisa el servicio `zaaryx-crm-staging`
 4. Completa como mínimo:
    - `APP_URL`
    - `MAIL_FROM`
@@ -57,23 +57,23 @@ Usa [.env.staging.example](./.env.staging.example) como referencia. En staging s
 
 Si el `staging` arranca con una base vacía o sin tus demos de `cliente` y `freelance`, la forma más segura de alinearlo con local es restaurar un volcado SQL de tu base actual.
 
-1. Crea un backup local de `jaadsglobal.db`
+1. Crea un backup local de `zaaryx.db`
 2. Exporta el dump SQL:
-   `sqlite3 jaadsglobal.db .dump > /tmp/jaadsglobal-staging.sql`
+   `sqlite3 zaaryx.db .dump > /tmp/zaaryx-staging.sql`
 3. En Render, añade ese dump como `Secret File`
    - nombre sugerido: `staging-seed.sql`
    - ruta final: `/etc/secrets/staging-seed.sql`
-4. Activa `Maintenance Mode` en `jaadsglobal-crm-staging` para bloquear tráfico público mientras sustituyes la base
-5. Abre la `Shell` del propio servicio `jaadsglobal-crm-staging`
+4. Activa `Maintenance Mode` en `zaaryx-crm-staging` para bloquear tráfico público mientras sustituyes la base
+5. Abre la `Shell` del propio servicio `zaaryx-crm-staging`
    - evita `one-off jobs`: en Render no ven el `persistent disk` del servicio
 6. Ejecuta la importación sobre el disco persistente:
-   `npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/jaadsglobal.db`
+   `npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/zaaryx.db`
 7. Reinicia el servicio desde Render
 8. Desactiva `Maintenance Mode`
 9. Verifica de nuevo:
    - login admin
-   - `cliente.demo@jaadsglobal.local`
-   - `freelance.demo@jaadsglobal.local`
+   - `cliente.demo@zaaryx.local`
+   - `freelance.demo@zaaryx.local`
    - `/healthz`
 
 El script de importación crea una copia previa del fichero remoto antes de sustituirlo, así que el staging no se pisa sin respaldo.
@@ -85,13 +85,13 @@ Mantén `/healthz` en staging mientras faltan `SMTP` o `APP_URL` definitivos. Cu
 ## Variables mínimas
 
 - `APP_URL=https://tu-dominio-real`
-- `DATABASE_PATH=/data/jaadsglobal.db`
+- `DATABASE_PATH=/data/zaaryx.db`
 - `SMTP_HOST=...`
 - `SMTP_PORT=587`
 - `SMTP_SECURE=false`
 - `SMTP_USER=...`
 - `SMTP_PASS=...`
-- `MAIL_FROM=JaaDs Global CRM <no-reply@tu-dominio>`
+- `MAIL_FROM=ZaaRyx CRM <no-reply@tu-dominio>`
 
 ## Variables recomendadas
 
@@ -115,18 +115,18 @@ Mantén `/healthz` en staging mientras faltan `SMTP` o `APP_URL` definitivos. Cu
 ## Docker
 
 1. Construye la imagen:
-   `docker build -t jaadsglobal-crm .`
+   `docker build -t zaaryx-crm .`
 2. Ejecuta con volumen persistente:
-   `docker run --env-file .env -p 3000:3000 -v jaadsglobal_data:/data jaadsglobal-crm`
+   `docker run --env-file .env -p 3000:3000 -v zaaryx_data:/data zaaryx-crm`
 3. Comprueba:
    `GET /healthz`
    `GET /readyz`
 
 ## Docker Compose
 
-El proyecto incluye [compose.yml](./compose.yml) para levantar una instancia de staging o producción local con volumen persistente.
+El proyecto incluye [compose.yml](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/compose.yml) para levantar una instancia de staging o producción local con volumen persistente.
 
-1. Crea tu fichero real de entorno a partir de [.env.production.example](./.env.production.example)
+1. Crea tu fichero real de entorno a partir de [.env.production.example](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/.env.production.example)
 2. Exporta esas variables en tu shell o cárgalas desde tu plataforma
 3. Levanta el stack:
    `docker compose up --build -d`

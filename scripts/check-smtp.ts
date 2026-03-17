@@ -46,7 +46,7 @@ const from =
   process.env.MAIL_FROM?.trim() ||
   process.env.SMTP_FROM?.trim() ||
   user ||
-  "no-reply@jaadsglobal.local";
+  "no-reply@zaaryx.local";
 
 if (!host || !Number.isFinite(port)) {
   console.error("[smtp] SMTP_HOST o SMTP_PORT no estan configurados correctamente.");
@@ -85,9 +85,9 @@ const run = async () => {
   const result = await transporter.sendMail({
     from,
     to: recipient,
-    subject: "Prueba SMTP · JaaDs Global CRM",
+    subject: "Prueba SMTP · ZaaRyx CRM",
     text: [
-      "Esta es una prueba manual del canal SMTP de JaaDs Global CRM.",
+      "Esta es una prueba manual del canal SMTP de ZaaRyx CRM.",
       "",
       `Servidor: ${host}:${port}`,
       `Secure: ${secure ? "true" : "false"}`,

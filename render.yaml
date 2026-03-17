@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: jaadsglobal-crm-staging
+    name: zaaryx-crm-staging
     runtime: docker
     plan: starter
     region: frankfurt
@@ -10,12 +10,12 @@ services:
     autoDeployTrigger: checksPass
     healthCheckPath: /healthz
     disk:
-      name: jaadsglobal-data
+      name: zaaryx-data
       mountPath: /data
       sizeGB: 1
     envVars:
       - key: DATABASE_PATH
-        value: /data/jaadsglobal.db
+        value: /data/zaaryx.db
       - key: APP_URL
         sync: false
       - key: MAIL_FROM
