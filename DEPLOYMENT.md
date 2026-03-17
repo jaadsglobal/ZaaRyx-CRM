@@ -107,6 +107,7 @@ Mantén `/healthz` en staging mientras faltan `SMTP` o `APP_URL` definitivos. Cu
 3. Ejecuta preflight:
    `npm run preflight`
 4. Corrige cualquier `FAIL` antes de desplegar.
+5. En el primer `staging` con `STRICT_PRODUCTION_CHECKS=false`, la falta de `SMTP` puede quedar como `WARN`; mantén el health check en `/healthz` hasta completar la configuración final.
 
 ## Docker
 

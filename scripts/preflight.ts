@@ -18,6 +18,8 @@ const isProduction = process.env.NODE_ENV === "production";
 const parseBooleanEnvFlag = (value?: string) =>
   typeof value === "string" && ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 
+const strictProductionChecksEnabled = parseBooleanEnvFlag(process.env.STRICT_PRODUCTION_CHECKS);
+
 const normalizeAppUrl = (value?: string | null) => {
   if (!value || typeof value !== "string") {
     return null;
@@ -198,10 +200,12 @@ const checks: CheckResult[] = [
   {
     key: "smtp",
     label: "SMTP",
-    status: smtpConfigured ? "ready" : "critical",
+    status: smtpConfigured ? "ready" : strictProductionChecksEnabled ? "critical" : "warning",
     detail: smtpConfigured
       ? "SMTP está configurado."
-      : "Faltan SMTP_HOST y/o SMTP_PORT para correos reales.",
+      : strictProductionChecksEnabled
+        ? "Faltan SMTP_HOST y/o SMTP_PORT para correos reales."
+        : "Faltan SMTP_HOST y/o SMTP_PORT. Con STRICT_PRODUCTION_CHECKS=false el staging puede arrancar, pero no enviará correos reales.",
   },
   {
     key: "mail_from",
@@ -241,6 +245,7 @@ const counts = checks.reduce(
 
 console.log("Preflight de despliegue");
 console.log(`Modo: ${isProduction ? "production" : "development"}`);
+console.log(`Strict checks: ${strictProductionChecksEnabled ? "enabled" : "disabled"}`);
 console.log(`Proyecto: ${projectRoot}`);
 console.log("");
 
