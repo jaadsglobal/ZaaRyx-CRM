@@ -1047,11 +1047,11 @@ export const ClientsManager: React.FC = () => {
             ) : null}
           </AnimatePresence>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
         {loading ? (
           [1, 2].map((item) => <div key={item} className="h-48 glass-panel animate-pulse" />)
         ) : filteredClients.length === 0 ? (
-          <div className="lg:col-span-2 glass-panel p-8 text-center text-white/40">
+          <div className="glass-panel p-8 text-center text-white/40">
             {showArchived
               ? 'No hay clientes archivados que coincidan con los filtros actuales.'
               : 'No hay clientes que coincidan con los filtros actuales.'}
