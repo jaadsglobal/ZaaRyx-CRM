@@ -1,8 +1,8 @@
 services:
-  zaaryx-crm:
+  jaadsglobal-crm:
     build:
       context: .
-    image: zaaryx-crm:local
+    image: jaadsglobal-crm:local
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-3000}:3000"
@@ -10,7 +10,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       APP_URL: ${APP_URL}
-      DATABASE_PATH: /data/zaaryx.db
+      DATABASE_PATH: /data/jaadsglobal.db
       MAIL_FROM: ${MAIL_FROM}
       TRUST_PROXY: ${TRUST_PROXY:-true}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
@@ -24,7 +24,7 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
     volumes:
-      - zaaryx_data:/data
+      - jaadsglobal_data:/data
 
 volumes:
-  zaaryx_data:
+  jaadsglobal_data:

@@ -528,7 +528,7 @@ export const TeamManager: React.FC = () => {
                   }))
                 }
                 className="w-full glass-input"
-                placeholder="persona@zaaryx.com"
+                placeholder="persona@jaadsglobal.com"
               />
             </div>
 

@@ -198,11 +198,11 @@ const getResponseJson = async <T,>(response: Response): Promise<T> => {
   return response.json() as Promise<T>;
 };
 
-interface ZaaRyxAIProps {
+interface JaaDsGlobalAIProps {
   accessibleSections?: AppSection[];
 }
 
-export const ZaaRyxAI: React.FC<ZaaRyxAIProps> = ({
+export const JaaDsGlobalAI: React.FC<JaaDsGlobalAIProps> = ({
   accessibleSections = ['dashboard'],
 }) => {
   const [input, setInput] = useState('');
@@ -426,7 +426,7 @@ export const ZaaRyxAI: React.FC<ZaaRyxAIProps> = ({
 
   const handleGenerate = async () => {
     if (!input.trim()) {
-      setMessage('Añade contexto antes de ejecutar ZaaRyx AI.', 'error');
+      setMessage('Añade contexto antes de ejecutar JaaDs Global AI.', 'error');
       return;
     }
 
@@ -546,7 +546,7 @@ export const ZaaRyxAI: React.FC<ZaaRyxAIProps> = ({
           IA Generativa de Próxima Generación
         </div>
         <h2 className="text-5xl font-bold tracking-tight">
-          ZaaRyx <span className="text-brand-blue">AI</span> Engine
+          JaaDs Global <span className="text-brand-blue">AI</span> Engine
         </h2>
         <p className="text-white/50 max-w-2xl mx-auto">
           Potencia tu agencia con inteligencia aplicada. Genera propuestas, estrategias y análisis sin salir del CRM.
@@ -657,7 +657,7 @@ export const ZaaRyxAI: React.FC<ZaaRyxAIProps> = ({
                 ) : (
                   <>
                     <Zap className="w-5 h-5 fill-white" />
-                    Ejecutar ZaaRyx AI
+                    Ejecutar JaaDs Global AI
                   </>
                 )}
               </button>

@@ -122,7 +122,7 @@ const getReadinessLabel = (status: 'ready' | 'warning' | 'critical') => {
 };
 
 const createDefaultSettings = (): AppSettings => ({
-  agency_name: 'ZaaRyx Global',
+  agency_name: 'JaaDs Global',
   subscription_plan: 'pro',
   timezone: 'Europe/Madrid',
   currency: 'EUR',
@@ -346,7 +346,7 @@ export const SettingsManager: React.FC = () => {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
-    triggerClientDownload(url, 'zaaryx-settings.json', () => URL.revokeObjectURL(url));
+    triggerClientDownload(url, 'jaadsglobal-settings.json', () => URL.revokeObjectURL(url));
     setMessage('Copia de ajustes descargada.');
   };
 
@@ -355,7 +355,7 @@ export const SettingsManager: React.FC = () => {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
-    triggerClientDownload(url, 'zaaryx-audit-log.json', () => URL.revokeObjectURL(url));
+    triggerClientDownload(url, 'jaadsglobal-audit-log.json', () => URL.revokeObjectURL(url));
     setMessage('Auditoría descargada.');
   };
 
@@ -605,7 +605,7 @@ export const SettingsManager: React.FC = () => {
         type: 'text/plain;charset=utf-8',
       });
       const url = URL.createObjectURL(blob);
-      triggerClientDownload(url, 'zaaryx-2fa-backup-codes.txt', () => URL.revokeObjectURL(url));
+      triggerClientDownload(url, 'jaadsglobal-2fa-backup-codes.txt', () => URL.revokeObjectURL(url));
       setMessage('Códigos de respaldo descargados.');
     } finally {
       setTwoFactorBusy(null);

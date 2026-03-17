@@ -20,7 +20,7 @@ View your app in AI Studio: https://ai.studio/apps/b3dda3b8-2d74-43e5-a650-6f7b1
    `APP_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`
 4. For a real production deployment, review:
    `DATABASE_PATH`, `TRUST_PROXY`, `SECURE_COOKIES`, `JSON_BODY_LIMIT`, `STRICT_PRODUCTION_CHECKS`
-5. In production, use `DATABASE_PATH` over persistent storage. With Docker, the recommended path is `/data/zaaryx.db`.
+5. In production, use `DATABASE_PATH` over persistent storage. With Docker, the recommended path is `/data/jaadsglobal.db`.
 6. If the app is behind a reverse proxy or load balancer, set `TRUST_PROXY=true` only if that proxy forwards the real client IP and HTTPS scheme correctly.
 7. Inside `Ajustes` you now have a production readiness checklist that warns if `APP_URL`, SMTP or cookie/proxy settings are not ready.
 8. In local development, if SMTP is not configured, the recovery flow exposes a temporary reset link only in non-production mode.
@@ -37,4 +37,4 @@ View your app in AI Studio: https://ai.studio/apps/b3dda3b8-2d74-43e5-a650-6f7b1
 - `npm run start` now runs the production server through `node --import .../tsx`, which is safer for deployment than the `tsx` CLI wrapper.
 - If you want the server to abort startup when critical configuration is missing, set `STRICT_PRODUCTION_CHECKS=true`.
 - `/readyz` returns `503` when critical runtime checks fail, so it can be used directly by a load balancer or orchestrator.
-- A Docker deployment recipe is available in [DEPLOYMENT.md](/Users/juanguillermomarquezperez/Downloads/zaaryx-global-crm/DEPLOYMENT.md).
+- A Docker deployment recipe is available in [DEPLOYMENT.md](./DEPLOYMENT.md).
