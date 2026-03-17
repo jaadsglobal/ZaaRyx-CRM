@@ -313,6 +313,7 @@ export default function App() {
   const currentUserRoleKey = currentUser ? getRoleKey(currentUser.role) : null;
   const isClientPortalUser = currentUserRoleKey === 'client';
   const isFreelancerPortalUser = currentUserRoleKey === 'freelancer';
+  const hasPriorityAuthToken = Boolean(inviteToken || resetToken);
 
   const resolveNavigationTarget = (nextTab: string): AppSection => {
     const fallbackSection = getResolvedDefaultSection(currentUser);
@@ -384,7 +385,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (currentUser || !inviteToken || resetToken) {
+    if (!inviteToken || resetToken) {
       setInviteInfo(null);
       setInviteChecking(false);
       return;
@@ -422,10 +423,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, inviteToken, resetToken]);
+  }, [inviteToken, resetToken]);
 
   useEffect(() => {
-    if (currentUser || !resetToken || inviteToken) {
+    if (!resetToken || inviteToken) {
       setResetInfo(null);
       setResetChecking(false);
       return;
@@ -465,7 +466,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser, inviteToken, resetToken]);
+  }, [inviteToken, resetToken]);
 
   useEffect(() => {
     if (currentUser) {
@@ -869,15 +870,11 @@ export default function App() {
     }
   };
 
-  if (
-    authChecking ||
-    (!currentUser && Boolean(inviteToken) && inviteChecking) ||
-    (!currentUser && Boolean(resetToken) && resetChecking)
-  ) {
+  if ((authChecking && !hasPriorityAuthToken) || Boolean(inviteToken && inviteChecking) || Boolean(resetToken && resetChecking)) {
     return authLoader;
   }
 
-  return currentUser ? (
+  return currentUser && !hasPriorityAuthToken ? (
     <div className="min-h-screen flex">
       <Sidebar
         activeTab={activeTab}
