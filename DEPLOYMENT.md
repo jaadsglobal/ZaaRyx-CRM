@@ -63,11 +63,14 @@ Si el `staging` arranca con una base vacía o sin tus demos de `cliente` y `free
 3. En Render, añade ese dump como `Secret File`
    - nombre sugerido: `staging-seed.sql`
    - ruta final: `/etc/secrets/staging-seed.sql`
-4. Abre la `Shell` del servicio `zaaryx-crm-staging`
-5. Ejecuta la importación sobre el disco persistente:
+4. Activa `Maintenance Mode` en `zaaryx-crm-staging` para bloquear tráfico público mientras sustituyes la base
+5. Abre la `Shell` del propio servicio `zaaryx-crm-staging`
+   - evita `one-off jobs`: en Render no ven el `persistent disk` del servicio
+6. Ejecuta la importación sobre el disco persistente:
    `npm run db:import-dump -- /etc/secrets/staging-seed.sql /data/zaaryx.db`
-6. Reinicia el servicio desde Render
-7. Verifica de nuevo:
+7. Reinicia el servicio desde Render
+8. Desactiva `Maintenance Mode`
+9. Verifica de nuevo:
    - login admin
    - `cliente.demo@zaaryx.local`
    - `freelance.demo@zaaryx.local`
@@ -148,4 +151,5 @@ El proyecto incluye [compose.yml](/Users/juanguillermomarquezperez/Downloads/zaa
 - Esta app usa SQLite. En producción necesitas almacenamiento persistente real para `DATABASE_PATH`.
 - Si despliegas en una plataforma con filesystem efímero y sin volumen persistente, perderás datos al reiniciar.
 - Si `STRICT_PRODUCTION_CHECKS=true`, el servidor no arrancará si faltan `APP_URL` o SMTP.
+- En Render, los servicios con `persistent disk` no tienen despliegue realmente `zero-downtime`; espera una interrupción breve en cada restart o redeploy.
 - Si más adelante quieres usar Supabase, la ruta correcta es migrar antes la capa de datos a Postgres y después reevaluar si merece la pena mover el hosting del backend.

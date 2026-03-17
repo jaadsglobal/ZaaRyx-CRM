@@ -15,6 +15,34 @@ const usage = () => {
   );
 };
 
+const getSqliteSidecarPaths = (databasePath: string) => [
+  `${databasePath}-wal`,
+  `${databasePath}-shm`,
+];
+
+const removeSqliteArtifacts = (databasePath: string) => {
+  fs.rmSync(databasePath, { force: true });
+
+  for (const sidecarPath of getSqliteSidecarPaths(databasePath)) {
+    fs.rmSync(sidecarPath, { force: true });
+  }
+};
+
+const moveSqliteArtifacts = (sourceDatabasePath: string, destinationDatabasePath: string) => {
+  if (fs.existsSync(sourceDatabasePath)) {
+    fs.renameSync(sourceDatabasePath, destinationDatabasePath);
+  }
+
+  const sourceSidecars = getSqliteSidecarPaths(sourceDatabasePath);
+  const destinationSidecars = getSqliteSidecarPaths(destinationDatabasePath);
+
+  sourceSidecars.forEach((sourceSidecarPath, index) => {
+    if (fs.existsSync(sourceSidecarPath)) {
+      fs.renameSync(sourceSidecarPath, destinationSidecars[index]);
+    }
+  });
+};
+
 const resolveDatabasePath = (value?: string | null) => {
   const configuredPath = typeof value === "string" && value.trim() ? value.trim() : "zaaryx.db";
   return path.isAbsolute(configuredPath)
@@ -52,12 +80,12 @@ if (!dumpContents.trim()) {
 }
 
 fs.mkdirSync(targetDirectory, { recursive: true });
-fs.rmSync(temporaryDatabasePath, { force: true });
+removeSqliteArtifacts(temporaryDatabasePath);
 
 const temporaryDatabase = new Database(temporaryDatabasePath);
 
 try {
-  temporaryDatabase.pragma("journal_mode = WAL");
+  temporaryDatabase.pragma("journal_mode = DELETE");
   temporaryDatabase.exec(dumpContents);
 
   const integrityCheck = temporaryDatabase.pragma("integrity_check", { simple: true });
@@ -74,18 +102,40 @@ try {
   }
 } catch (error) {
   temporaryDatabase.close();
-  fs.rmSync(temporaryDatabasePath, { force: true });
+  removeSqliteArtifacts(temporaryDatabasePath);
   throw error;
 }
 
 temporaryDatabase.close();
 
-if (fs.existsSync(targetDatabasePath)) {
-  fs.renameSync(targetDatabasePath, backupDatabasePath);
+const temporaryDatabaseStats = fs.existsSync(temporaryDatabasePath)
+  ? fs.statSync(temporaryDatabasePath)
+  : null;
+
+if (!temporaryDatabaseStats || temporaryDatabaseStats.size === 0) {
+  removeSqliteArtifacts(temporaryDatabasePath);
+  throw new Error(`La base temporal no quedó persistida correctamente en ${temporaryDatabasePath}.`);
+}
+
+if (
+  fs.existsSync(targetDatabasePath) ||
+  getSqliteSidecarPaths(targetDatabasePath).some((artifactPath) => fs.existsSync(artifactPath))
+) {
+  removeSqliteArtifacts(backupDatabasePath);
+  moveSqliteArtifacts(targetDatabasePath, backupDatabasePath);
   console.log(`[import] Copia previa guardada en ${backupDatabasePath}`);
 }
 
-fs.renameSync(temporaryDatabasePath, targetDatabasePath);
+moveSqliteArtifacts(temporaryDatabasePath, targetDatabasePath);
+
+const targetDatabaseStats = fs.existsSync(targetDatabasePath)
+  ? fs.statSync(targetDatabasePath)
+  : null;
+
+if (!targetDatabaseStats || targetDatabaseStats.size === 0) {
+  removeSqliteArtifacts(targetDatabasePath);
+  throw new Error(`La base importada no quedó disponible en ${targetDatabasePath}.`);
+}
 
 const importedDatabase = new Database(targetDatabasePath, { readonly: true });
 
