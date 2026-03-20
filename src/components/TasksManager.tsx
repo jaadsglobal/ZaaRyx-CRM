@@ -16,7 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarEvent, Project, Task, cn } from '../types';
+import { CalendarEvent, Project, Task, TaskAssigneeOption, cn } from '../types';
 import { CollapsibleSection } from './CollapsibleSection';
 import { InteractiveSummaryCard } from './InteractiveSummaryCard';
 
@@ -30,6 +30,7 @@ interface TaskFormState {
   priority: Task['priority'];
   due_date: string;
   project_id: string;
+  assigned_to: string;
 }
 
 const taskStatusOrder: Task['status'][] = ['todo', 'in_progress', 'review', 'done'];
@@ -55,6 +56,7 @@ const createInitialTaskForm = (projectId?: number): TaskFormState => ({
   priority: 'medium',
   due_date: getDefaultDueDate(),
   project_id: projectId ? String(projectId) : '',
+  assigned_to: '',
 });
 
 const getPriorityColor = (priority: Task['priority']) => {
@@ -184,6 +186,23 @@ const getTaskUrgencyClass = (task: Task) => {
   }
 };
 
+const getAssigneeInitials = (task: Task) => {
+  const source = task.assigned_name || '';
+  const parts = source
+    .split(' ')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return task.assigned_to ? 'A' : 'U';
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('');
+};
+
 const getTaskRecommendedMove = (task: Task) => {
   switch (task.status) {
     case 'todo':
@@ -245,6 +264,7 @@ export const TasksManager: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [assignees, setAssignees] = useState<TaskAssigneeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('all');
@@ -256,6 +276,7 @@ export const TasksManager: React.FC = () => {
   const [showUpcomingOnly, setShowUpcomingOnly] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
+  const [updatingAssignmentTaskId, setUpdatingAssignmentTaskId] = useState<number | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
   const [archivingTaskId, setArchivingTaskId] = useState<number | null>(null);
   const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
@@ -266,21 +287,24 @@ export const TasksManager: React.FC = () => {
   const loadTasksData = async () => {
     try {
       const archiveQuery = showArchived ? '?include_archived=true' : '';
-      const [tasksResponse, projectsResponse, calendarEventsResponse] = await Promise.all([
+      const [tasksResponse, projectsResponse, calendarEventsResponse, assigneesResponse] = await Promise.all([
         fetch(`/api/tasks${archiveQuery}`),
         fetch(`/api/projects${archiveQuery}`),
         fetch('/api/calendar-events?tab=tasks&limit=24'),
+        fetch('/api/task-assignees'),
       ]);
 
-      const [tasksData, projectsData, calendarEventsData] = await Promise.all([
+      const [tasksData, projectsData, calendarEventsData, assigneesData] = await Promise.all([
         getResponseJson<Task[]>(tasksResponse),
         getResponseJson<Project[]>(projectsResponse),
         getResponseJson<CalendarEvent[]>(calendarEventsResponse),
+        getResponseJson<TaskAssigneeOption[]>(assigneesResponse),
       ]);
 
       setTasks(tasksData);
       setProjects(projectsData);
       setCalendarEvents(calendarEventsData.filter((event) => event.source_type === 'task'));
+      setAssignees(assigneesData);
       setTaskForm((currentForm) =>
         currentForm.project_id || projectsData.length === 0
           ? currentForm
@@ -357,6 +381,10 @@ export const TasksManager: React.FC = () => {
     accumulator[project.id] = project.name;
     return accumulator;
   }, {});
+  const assigneeById = assignees.reduce<Record<number, TaskAssigneeOption>>((accumulator, assignee) => {
+    accumulator[assignee.id] = assignee;
+    return accumulator;
+  }, {});
 
   const setMessage = (message: string, tone: 'success' | 'error' = 'success') => {
     setFeedbackTone(tone);
@@ -420,6 +448,7 @@ export const TasksManager: React.FC = () => {
           priority: taskForm.priority,
           due_date: taskForm.due_date,
           project_id: taskForm.project_id ? Number(taskForm.project_id) : undefined,
+          assigned_to: taskForm.assigned_to ? Number(taskForm.assigned_to) : null,
         }),
       });
 
@@ -445,6 +474,40 @@ export const TasksManager: React.FC = () => {
 
   const toggleExpandedTask = (taskId: number) => {
     setExpandedTaskId((currentId) => (currentId === taskId ? null : taskId));
+  };
+
+  const handleUpdateTaskAssignment = async (task: Task, assignedTo: string) => {
+    setUpdatingAssignmentTaskId(task.id);
+
+    try {
+      const response = await fetch(`/api/tasks/${task.id}/assignment`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          assigned_to: assignedTo ? Number(assignedTo) : null,
+        }),
+      });
+
+      const updatedTask = await getResponseJson<Task>(response);
+      setTasks((currentTasks) =>
+        currentTasks.map((currentTask) => (currentTask.id === updatedTask.id ? updatedTask : currentTask)),
+      );
+      setMessage(
+        assignedTo
+          ? `Tarea asignada a ${assigneeById[Number(assignedTo)]?.name || 'usuario seleccionado'}.`
+          : 'Tarea desasignada correctamente.',
+      );
+    } catch (error) {
+      console.error('Error updating task assignment:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo actualizar la asignacion de la tarea.',
+        'error',
+      );
+    } finally {
+      setUpdatingAssignmentTaskId(null);
+    }
   };
 
   const handleToggleNewTaskForm = () => {
@@ -768,6 +831,30 @@ export const TasksManager: React.FC = () => {
               </select>
             </div>
 
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-white/40 mb-2">
+                Responsable
+              </label>
+              <select
+                value={taskForm.assigned_to}
+                onChange={(event) =>
+                  setTaskForm((currentForm) => ({
+                    ...currentForm,
+                    assigned_to: event.target.value,
+                  }))
+                }
+                className="w-full glass-input"
+              >
+                <option value="">Sin asignar</option>
+                {assignees.map((assignee) => (
+                  <option key={assignee.id} value={assignee.id}>
+                    {assignee.name} · {assignee.role}
+                    {assignee.access_status === 'invited' ? ' · Invitado' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="md:col-span-2">
               <label className="block text-xs font-bold uppercase tracking-wider text-white/40 mb-2">
                 Descripción
@@ -1000,8 +1087,11 @@ export const TasksManager: React.FC = () => {
                     </span>
 
                     <div className="flex -space-x-2">
-                      <div className="w-7 h-7 rounded-full border-2 border-[#050505] bg-brand-blue flex items-center justify-center text-[10px] font-bold">
-                        {task.assigned_to ? 'A' : 'U'}
+                      <div
+                        className="w-7 h-7 rounded-full border-2 border-[#050505] bg-brand-blue flex items-center justify-center text-[10px] font-bold"
+                        title={task.assigned_name || 'Sin asignar'}
+                      >
+                        {getAssigneeInitials(task)}
                       </div>
                     </div>
 
@@ -1116,6 +1206,38 @@ export const TasksManager: React.FC = () => {
                               <span>
                                 Prioridad {getPriorityLabel(task.priority).toLowerCase()}
                               </span>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/35">
+                                    Asignacion
+                                  </p>
+                                  <p className="mt-2 text-sm text-white/60">
+                                    {task.assigned_name
+                                      ? `${task.assigned_name}${task.assignee_access_status === 'invited' ? ' · invitado' : ''}`
+                                      : 'Todavia no hay un responsable asignado.'}
+                                  </p>
+                                </div>
+
+                                <select
+                                  value={task.assigned_to ? String(task.assigned_to) : ''}
+                                  onChange={(event) =>
+                                    void handleUpdateTaskAssignment(task, event.target.value)
+                                  }
+                                  disabled={updatingAssignmentTaskId === task.id}
+                                  className="glass-input min-w-[240px] disabled:opacity-50"
+                                >
+                                  <option value="">Sin asignar</option>
+                                  {assignees.map((assignee) => (
+                                    <option key={assignee.id} value={assignee.id}>
+                                      {assignee.name} · {assignee.role}
+                                      {assignee.access_status === 'invited' ? ' · Invitado' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
 
                             <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-4">

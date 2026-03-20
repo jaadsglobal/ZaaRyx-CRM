@@ -44,7 +44,6 @@ const supportedRoles = [
   'AI Specialist',
   'Account Manager',
   'Finance',
-  'Client',
 ];
 
 const getResponseJson = async <T,>(response: Response): Promise<T> => {

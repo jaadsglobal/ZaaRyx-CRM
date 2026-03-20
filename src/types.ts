@@ -45,6 +45,17 @@ export interface Client {
   created_at: string;
 }
 
+export interface PortalAccessSummary {
+  user_id: number;
+  email: string;
+  name: string;
+  role: string;
+  access_status: 'invited' | 'active';
+  invited_at?: string | null;
+  activated_at?: string | null;
+  invite_url?: string | null;
+}
+
 export interface ClientOnboardingStep {
   id: number;
   onboarding_id: number;
@@ -193,6 +204,23 @@ export interface Freelancer {
   status: 'active' | 'paused' | 'inactive';
   created_at: string;
   updated_at: string;
+  portal_access?: PortalAccessSummary | null;
+}
+
+export interface FreelancerProjectAssignment {
+  id: number;
+  project_id: number;
+  project_name: string;
+  client_id: number;
+  client_name?: string | null;
+  freelancer_id: number;
+  freelancer_name: string;
+  freelancer_email?: string | null;
+  role_label?: string | null;
+  notes?: string | null;
+  status: 'active' | 'paused' | 'archived';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ContractLineItem {
@@ -254,6 +282,15 @@ export interface ContractDelivery {
   skipped: boolean;
   channel: 'smtp' | 'manual';
   reason?: string | null;
+}
+
+export interface PortalInviteResponse {
+  access: PortalAccessSummary | null;
+  delivery: ContractDelivery;
+  created?: boolean;
+  linked_existing?: boolean;
+  already_active?: boolean;
+  resent?: boolean;
 }
 
 export interface ContractSendResponse extends Contract {
@@ -442,6 +479,7 @@ export interface ClientManagementDocumentSummary {
 export interface ClientManagementOverview {
   client_id: number;
   currency: AppSettings['currency'];
+  portal_access?: PortalAccessSummary | null;
   contact: {
     name?: string | null;
     email?: string | null;
@@ -738,6 +776,16 @@ export interface TeamMember {
   activated_at?: string | null;
   projects: number;
   onboarding?: TeamOnboarding | null;
+}
+
+export interface TaskAssigneeOption {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  access_status: 'invited' | 'active';
+  client_id?: number | null;
+  freelancer_id?: number | null;
 }
 
 export interface InviteActivationInfo {
@@ -1125,6 +1173,8 @@ export interface Task {
   priority: 'low' | 'medium' | 'high';
   due_date: string;
   assigned_to?: number;
+  assigned_name?: string | null;
+  assignee_access_status?: 'invited' | 'active' | null;
   archived_at?: string | null;
 }
 

@@ -22,6 +22,9 @@ import {
   Mail,
   Phone,
   Download,
+  Copy,
+  RefreshCw,
+  UserPlus,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -31,6 +34,7 @@ import {
   ClientOnboarding,
   ClientOnboardingStep,
   Lead,
+  PortalInviteResponse,
   Project,
   cn,
 } from '../types';
@@ -331,6 +335,10 @@ export const ClientsManager: React.FC = () => {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [feedbackTone, setFeedbackTone] = useState<'success' | 'error'>('success');
   const [clientForm, setClientForm] = useState<ClientFormState>(createInitialClientForm());
+  const [clientPortalDrafts, setClientPortalDrafts] = useState<
+    Record<number, { name: string; email: string }>
+  >({});
+  const [portalActionClientId, setPortalActionClientId] = useState<number | null>(null);
 
   const loadClientsData = async () => {
     try {
@@ -363,17 +371,41 @@ export const ClientsManager: React.FC = () => {
       const overviewData = overviewResponse.ok
         ? await getResponseJson<ClientManagementOverview[]>(overviewResponse)
         : [];
+      const nextOverviewById = overviewData.reduce<Record<number, ClientManagementOverview>>(
+        (accumulator, overview) => {
+          accumulator[overview.client_id] = overview;
+          return accumulator;
+        },
+        {},
+      );
 
       setClients(clientsData);
       setProjects(projectsData);
       setLeads(leadsData);
       setOnboardings(onboardingsData);
-      setClientOverviewById(
-        overviewData.reduce<Record<number, ClientManagementOverview>>((accumulator, overview) => {
-          accumulator[overview.client_id] = overview;
-          return accumulator;
-        }, {}),
-      );
+      setClientOverviewById(nextOverviewById);
+      setClientPortalDrafts((currentDrafts) => {
+        const nextDrafts = { ...currentDrafts };
+
+        clientsData.forEach((client) => {
+          const overview = nextOverviewById[client.id];
+          const currentDraft = nextDrafts[client.id];
+          const fallbackName = overview?.contact.name || client.company;
+          const fallbackEmail = overview?.contact.email || '';
+
+          nextDrafts[client.id] = currentDraft
+            ? {
+                name: currentDraft.name || fallbackName,
+                email: currentDraft.email || fallbackEmail,
+              }
+            : {
+                name: fallbackName,
+                email: fallbackEmail,
+              };
+        });
+
+        return nextDrafts;
+      });
     } catch (error) {
       console.error('Error fetching clients:', error);
       setFeedbackTone('error');
@@ -735,6 +767,94 @@ export const ClientsManager: React.FC = () => {
 
   const handleToggleClientDetails = (clientId: number) => {
     setExpandedClientId((currentId) => (currentId === clientId ? null : clientId));
+  };
+
+  const handleCopyInviteLink = async (inviteUrl: string, clientCompany: string) => {
+    try {
+      if (!navigator.clipboard) {
+        throw new Error('Clipboard API not available');
+      }
+
+      await navigator.clipboard.writeText(inviteUrl);
+      setMessage(`Enlace de invitacion copiado para ${clientCompany}.`);
+    } catch (error) {
+      console.error('Error copying client invite link:', error);
+      setMessage('No se pudo copiar el enlace de invitacion.', 'error');
+    }
+  };
+
+  const handleInviteClientPortal = async (client: Client) => {
+    const draft = clientPortalDrafts[client.id] || {
+      name: clientOverviewById[client.id]?.contact.name || client.company,
+      email: clientOverviewById[client.id]?.contact.email || '',
+    };
+
+    setPortalActionClientId(client.id);
+
+    try {
+      const response = await fetch(`/api/clients/${client.id}/portal-access/invite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(draft),
+      });
+
+      const result = await getResponseJson<PortalInviteResponse>(response);
+      await loadClientsData();
+
+      if (result.already_active) {
+        setMessage(`${client.company} ya tiene acceso activo al portal cliente.`);
+      } else if (result.delivery.delivered) {
+        setMessage(`Invitacion enviada a ${result.access?.email || draft.email} para ${client.company}.`);
+      } else if (result.access?.invite_url) {
+        setMessage(
+          `Acceso preparado para ${client.company}. SMTP no envio el correo; puedes copiar el enlace desde esta ficha.`,
+        );
+      } else {
+        setMessage(
+          `Acceso preparado para ${client.company}, pero falta una URL publica para compartir la invitacion.`,
+          'error',
+        );
+      }
+    } catch (error) {
+      console.error('Error inviting client portal access:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo preparar el acceso portal del cliente.',
+        'error',
+      );
+    } finally {
+      setPortalActionClientId(null);
+    }
+  };
+
+  const handleResendClientPortalInvite = async (client: Client) => {
+    setPortalActionClientId(client.id);
+
+    try {
+      const response = await fetch(`/api/clients/${client.id}/portal-access/resend`, {
+        method: 'POST',
+      });
+
+      const result = await getResponseJson<PortalInviteResponse>(response);
+      await loadClientsData();
+
+      if (result.delivery.delivered) {
+        setMessage(`Invitacion reenviada a ${result.access?.email || client.company}.`);
+      } else if (result.access?.invite_url) {
+        setMessage(`Invitacion regenerada para ${client.company}. Puedes copiar el enlace desde esta ficha.`);
+      } else {
+        setMessage('No se pudo regenerar el enlace de invitacion del cliente.', 'error');
+      }
+    } catch (error) {
+      console.error('Error resending client portal invite:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo reenviar la invitacion del cliente.',
+        'error',
+      );
+    } finally {
+      setPortalActionClientId(null);
+    }
   };
 
   return (
@@ -1313,6 +1433,167 @@ export const ClientsManager: React.FC = () => {
                                       </div>
                                     )}
                                   </div>
+                                </CollapsibleSection>
+
+                                <CollapsibleSection
+                                  title="Portal cliente"
+                                  description="Invita al contacto principal, reenvia el acceso y controla el estado del portal."
+                                  icon={<UserPlus className="w-5 h-5" />}
+                                  summary={
+                                    clientOverview.portal_access
+                                      ? clientOverview.portal_access.access_status === 'active'
+                                        ? 'Activo'
+                                        : 'Invitado'
+                                      : 'Sin acceso'
+                                  }
+                                  storageKey={`client-${client.id}-portal-panel`}
+                                  defaultOpen={false}
+                                  className="self-start"
+                                  bodyClassName="space-y-4"
+                                >
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="block text-[10px] text-white/30 uppercase font-bold tracking-wider mb-2">
+                                        Nombre del contacto
+                                      </label>
+                                      <input
+                                        value={clientPortalDrafts[client.id]?.name || ''}
+                                        onChange={(event) =>
+                                          setClientPortalDrafts((currentDrafts) => ({
+                                            ...currentDrafts,
+                                            [client.id]: {
+                                              name: event.target.value,
+                                              email:
+                                                currentDrafts[client.id]?.email ||
+                                                clientOverview.contact.email ||
+                                                '',
+                                            },
+                                          }))
+                                        }
+                                        className="w-full glass-input"
+                                        placeholder="Nombre del responsable del cliente"
+                                      />
+                                    </div>
+
+                                    <div>
+                                      <label className="block text-[10px] text-white/30 uppercase font-bold tracking-wider mb-2">
+                                        Email de acceso
+                                      </label>
+                                      <input
+                                        value={clientPortalDrafts[client.id]?.email || ''}
+                                        onChange={(event) =>
+                                          setClientPortalDrafts((currentDrafts) => ({
+                                            ...currentDrafts,
+                                            [client.id]: {
+                                              name:
+                                                currentDrafts[client.id]?.name ||
+                                                clientOverview.contact.name ||
+                                                client.company,
+                                              email: event.target.value,
+                                            },
+                                          }))
+                                        }
+                                        className="w-full glass-input"
+                                        placeholder="cliente@empresa.com"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {clientOverview.portal_access ? (
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+                                      <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                          <p className="font-semibold">{clientOverview.portal_access.email}</p>
+                                          <p className="text-xs text-white/40 mt-1">
+                                            {clientOverview.portal_access.name} · {clientOverview.portal_access.role}
+                                          </p>
+                                        </div>
+                                        <span
+                                          className={cn(
+                                            'px-3 py-1 rounded-full border text-[10px] uppercase tracking-wider font-bold',
+                                            clientOverview.portal_access.access_status === 'active'
+                                              ? 'bg-green-500/10 text-green-300 border-green-500/20'
+                                              : 'bg-brand-blue/20 text-brand-blue border-brand-blue/20',
+                                          )}
+                                        >
+                                          {clientOverview.portal_access.access_status === 'active'
+                                            ? 'Activo'
+                                            : 'Invitado'}
+                                        </span>
+                                      </div>
+
+                                      <div className="text-xs text-white/40 flex flex-wrap gap-4">
+                                        <span>
+                                          Invitado:{' '}
+                                          {clientOverview.portal_access.invited_at
+                                            ? new Date(clientOverview.portal_access.invited_at).toLocaleDateString('es-ES')
+                                            : 'No'}
+                                        </span>
+                                        <span>
+                                          Activado:{' '}
+                                          {clientOverview.portal_access.activated_at
+                                            ? new Date(clientOverview.portal_access.activated_at).toLocaleDateString('es-ES')
+                                            : 'Pendiente'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="glass-input text-sm text-white/45">
+                                      Este cliente aun no tiene un usuario enlazado para contratos, onboarding y portal.
+                                    </div>
+                                  )}
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={portalActionClientId === client.id}
+                                      onClick={() => void handleInviteClientPortal(client)}
+                                      className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <UserPlus className="w-4 h-4" />
+                                      {portalActionClientId === client.id
+                                        ? 'Preparando...'
+                                        : clientOverview.portal_access
+                                          ? clientOverview.portal_access.access_status === 'active'
+                                            ? 'Actualizar acceso'
+                                            : 'Actualizar invitacion'
+                                          : 'Invitar al portal'}
+                                    </button>
+
+                                    {clientOverview.portal_access?.access_status === 'invited' ? (
+                                      <button
+                                        type="button"
+                                        disabled={portalActionClientId === client.id}
+                                        onClick={() => void handleResendClientPortalInvite(client)}
+                                        className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        <RefreshCw className="w-4 h-4" />
+                                        Reenviar
+                                      </button>
+                                    ) : null}
+
+                                    {clientOverview.portal_access?.invite_url ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          void handleCopyInviteLink(
+                                            clientOverview.portal_access?.invite_url || '',
+                                            client.company,
+                                          )
+                                        }
+                                        className="glass-button-secondary"
+                                      >
+                                        <Copy className="w-4 h-4" />
+                                        Copiar enlace
+                                      </button>
+                                    ) : null}
+                                  </div>
+
+                                  {clientOverview.portal_access?.access_status === 'active' ? (
+                                    <p className="text-xs text-white/40">
+                                      Si el cliente pierde acceso, puede usar "Recuperar acceso" desde la pantalla de login.
+                                    </p>
+                                  ) : null}
                                 </CollapsibleSection>
 
                                 <CollapsibleSection

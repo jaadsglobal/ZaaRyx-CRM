@@ -8,9 +8,10 @@ import {
   Archive,
   RotateCcw,
   Trash2,
+  UserPlus,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Campaign, Client, Project, Task, cn } from '../types';
+import { Campaign, Client, Freelancer, FreelancerProjectAssignment, Project, Task, cn } from '../types';
 
 type ProjectColumnId = Exclude<Project['status'], 'completed'> | 'completed';
 
@@ -18,6 +19,12 @@ interface ProjectFormState {
   client_id: string;
   name: string;
   status: Project['status'];
+}
+
+interface ProjectAssignmentFormState {
+  freelancer_id: string;
+  role_label: string;
+  notes: string;
 }
 
 interface ProjectBoardCard {
@@ -44,6 +51,12 @@ const createInitialProjectForm = (clientId?: number): ProjectFormState => ({
   client_id: clientId ? String(clientId) : '',
   name: '',
   status: 'strategy',
+});
+
+const createInitialAssignmentForm = (freelancerId?: number): ProjectAssignmentFormState => ({
+  freelancer_id: freelancerId ? String(freelancerId) : '',
+  role_label: '',
+  notes: '',
 });
 
 const getResponseJson = async <T,>(response: Response): Promise<T> => {
@@ -97,6 +110,8 @@ export const ProjectsKanban: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
+  const [assignments, setAssignments] = useState<FreelancerProjectAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCalendarView, setShowCalendarView] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -106,37 +121,56 @@ export const ProjectsKanban: React.FC = () => {
   const [updatingProjectId, setUpdatingProjectId] = useState<number | null>(null);
   const [archivingProjectId, setArchivingProjectId] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
+  const [savingAssignmentProjectId, setSavingAssignmentProjectId] = useState<number | null>(null);
+  const [removingAssignmentId, setRemovingAssignmentId] = useState<number | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [feedbackTone, setFeedbackTone] = useState<'success' | 'error'>('success');
   const [projectForm, setProjectForm] = useState<ProjectFormState>(createInitialProjectForm());
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<number, ProjectAssignmentFormState>>({});
 
   const loadProjectsData = async () => {
     try {
       const archiveQuery = showArchived ? '?include_archived=true' : '';
-      const [projectsResponse, clientsResponse, tasksResponse, campaignsResponse] =
+      const [projectsResponse, clientsResponse, tasksResponse, campaignsResponse, freelancersResponse, assignmentsResponse] =
         await Promise.all([
           fetch(`/api/projects${archiveQuery}`),
           fetch(`/api/clients${archiveQuery}`),
           fetch(`/api/tasks${archiveQuery}`),
           fetch(`/api/campaigns${archiveQuery}`),
+          fetch('/api/freelancers'),
+          fetch('/api/freelancer-project-assignments'),
         ]);
 
-      const [projectsData, clientsData, tasksData, campaignsData] = await Promise.all([
+      const [projectsData, clientsData, tasksData, campaignsData, freelancersData, assignmentsData] = await Promise.all([
         getResponseJson<Project[]>(projectsResponse),
         getResponseJson<Client[]>(clientsResponse),
         getResponseJson<Task[]>(tasksResponse),
         getResponseJson<Campaign[]>(campaignsResponse),
+        getResponseJson<Freelancer[]>(freelancersResponse),
+        getResponseJson<FreelancerProjectAssignment[]>(assignmentsResponse),
       ]);
 
       setProjects(projectsData);
       setClients(clientsData);
       setTasks(tasksData);
       setCampaigns(campaignsData);
+      setFreelancers(freelancersData);
+      setAssignments(assignmentsData);
       setProjectForm((currentForm) =>
         currentForm.client_id || clientsData.length === 0
           ? currentForm
           : { ...currentForm, client_id: String(clientsData[0].id) },
       );
+      setAssignmentDrafts((currentDrafts) => {
+        const nextDrafts = { ...currentDrafts };
+        const defaultFreelancerId = freelancersData[0]?.id;
+
+        projectsData.forEach((project) => {
+          nextDrafts[project.id] = currentDrafts[project.id] || createInitialAssignmentForm(defaultFreelancerId);
+        });
+
+        return nextDrafts;
+      });
     } catch (error) {
       console.error('Error fetching projects:', error);
       setFeedbackTone('error');
@@ -194,6 +228,13 @@ export const ProjectsKanban: React.FC = () => {
         (card) => card.nextDueDate && isNextWeek(card.nextDueDate),
       )
     : projectCards;
+  const assignmentsByProjectId = assignments.reduce<Record<number, FreelancerProjectAssignment[]>>(
+    (accumulator, assignment) => {
+      accumulator[assignment.project_id] = [...(accumulator[assignment.project_id] || []), assignment];
+      return accumulator;
+    },
+    {},
+  );
 
   const handleCreateProject = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -340,6 +381,86 @@ export const ProjectsKanban: React.FC = () => {
       );
     } finally {
       setDeletingProjectId(null);
+    }
+  };
+
+  const handleUpdateAssignmentDraft = (
+    projectId: number,
+    field: keyof ProjectAssignmentFormState,
+    value: string,
+  ) => {
+    setAssignmentDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [projectId]: {
+        ...(currentDrafts[projectId] || createInitialAssignmentForm(freelancers[0]?.id)),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleAssignFreelancer = async (project: Project) => {
+    const draft = assignmentDrafts[project.id] || createInitialAssignmentForm(freelancers[0]?.id);
+
+    if (!draft.freelancer_id) {
+      setMessage('Selecciona un freelance para asignarlo al proyecto.', 'error');
+      return;
+    }
+
+    setSavingAssignmentProjectId(project.id);
+
+    try {
+      await getResponseJson<FreelancerProjectAssignment>(
+        await fetch('/api/freelancer-project-assignments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            project_id: project.id,
+            freelancer_id: Number(draft.freelancer_id),
+            role_label: draft.role_label,
+            notes: draft.notes,
+          }),
+        }),
+      );
+
+      await loadProjectsData();
+      setAssignmentDrafts((currentDrafts) => ({
+        ...currentDrafts,
+        [project.id]: createInitialAssignmentForm(Number(draft.freelancer_id)),
+      }));
+      setMessage('Freelance asignado correctamente al proyecto.');
+    } catch (error) {
+      console.error('Error assigning freelancer to project:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo asignar el freelance al proyecto.',
+        'error',
+      );
+    } finally {
+      setSavingAssignmentProjectId(null);
+    }
+  };
+
+  const handleRemoveFreelancerAssignment = async (assignment: FreelancerProjectAssignment) => {
+    setRemovingAssignmentId(assignment.id);
+
+    try {
+      await getResponseJson<{ deleted: boolean; id: number }>(
+        await fetch(`/api/freelancer-project-assignments/${assignment.id}`, {
+          method: 'DELETE',
+        }),
+      );
+
+      await loadProjectsData();
+      setMessage(`Freelance retirado del proyecto ${assignment.project_name}.`);
+    } catch (error) {
+      console.error('Error removing freelancer assignment:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo retirar el freelance del proyecto.',
+        'error',
+      );
+    } finally {
+      setRemovingAssignmentId(null);
     }
   };
 
@@ -712,6 +833,143 @@ export const ProjectsKanban: React.FC = () => {
                                   </span>
                                   <span>Tareas {card.tasksSummary}</span>
                                   <span>Campañas {card.campaignsCount}</span>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                      <p className="text-xs uppercase tracking-[0.2em] text-white/35 font-bold">
+                                        Handoff freelance
+                                      </p>
+                                      <p className="text-sm text-white/55 mt-1">
+                                        Vincula colaboradores externos al proyecto antes de asignarles tareas.
+                                      </p>
+                                    </div>
+                                    <span className="text-xs text-white/40">
+                                      {assignmentsByProjectId[card.project.id]?.length || 0} asignados
+                                    </span>
+                                  </div>
+
+                                  {assignmentsByProjectId[card.project.id]?.length ? (
+                                    <div className="space-y-3">
+                                      {(assignmentsByProjectId[card.project.id] || []).map((assignment) => {
+                                        const linkedFreelancer = freelancers.find(
+                                          (freelancer) => freelancer.id === assignment.freelancer_id,
+                                        );
+
+                                        return (
+                                          <div
+                                            key={assignment.id}
+                                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
+                                          >
+                                            <div className="min-w-0">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <p className="font-semibold">{assignment.freelancer_name}</p>
+                                                {linkedFreelancer?.portal_access ? (
+                                                  <span
+                                                    className={cn(
+                                                      'px-2 py-1 rounded-full border text-[10px] uppercase tracking-wider font-bold',
+                                                      linkedFreelancer.portal_access.access_status === 'active'
+                                                        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                                                        : 'bg-brand-blue/20 text-brand-blue border-brand-blue/20',
+                                                    )}
+                                                  >
+                                                    {linkedFreelancer.portal_access.access_status === 'active'
+                                                      ? 'Portal activo'
+                                                      : 'Portal invitado'}
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                              <p className="text-xs text-white/40 mt-1">
+                                                {assignment.role_label || 'Rol operativo sin definir'} ·{' '}
+                                                {assignment.freelancer_email || 'Sin email'}
+                                              </p>
+                                              {assignment.notes ? (
+                                                <p className="text-xs text-white/35 mt-2">{assignment.notes}</p>
+                                              ) : null}
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              disabled={removingAssignmentId === assignment.id}
+                                              onClick={() => void handleRemoveFreelancerAssignment(assignment)}
+                                              className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                              {removingAssignmentId === assignment.id ? 'Quitando...' : 'Quitar'}
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="glass-input text-sm text-white/45">
+                                      Este proyecto aun no tiene freelancers vinculados.
+                                    </div>
+                                  )}
+
+                                  {freelancers.length === 0 ? (
+                                    <div className="glass-input text-sm text-white/45">
+                                      Crea primero el freelance desde Contratos para poder traspasarle el proyecto.
+                                    </div>
+                                  ) : (
+                                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] gap-3">
+                                      <select
+                                        value={assignmentDrafts[card.project.id]?.freelancer_id || ''}
+                                        onChange={(event) =>
+                                          handleUpdateAssignmentDraft(
+                                            card.project.id,
+                                            'freelancer_id',
+                                            event.target.value,
+                                          )
+                                        }
+                                        className="glass-input"
+                                      >
+                                        <option value="">Selecciona freelance</option>
+                                        {freelancers.map((freelancer) => (
+                                          <option key={freelancer.id} value={freelancer.id}>
+                                            {freelancer.name}
+                                          </option>
+                                        ))}
+                                      </select>
+
+                                      <input
+                                        value={assignmentDrafts[card.project.id]?.role_label || ''}
+                                        onChange={(event) =>
+                                          handleUpdateAssignmentDraft(
+                                            card.project.id,
+                                            'role_label',
+                                            event.target.value,
+                                          )
+                                        }
+                                        className="glass-input"
+                                        placeholder="Rol: Media Buyer, Copy, Designer..."
+                                      />
+
+                                      <button
+                                        type="button"
+                                        disabled={savingAssignmentProjectId === card.project.id}
+                                        onClick={() => void handleAssignFreelancer(card.project)}
+                                        className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        <UserPlus className="w-4 h-4" />
+                                        {savingAssignmentProjectId === card.project.id ? 'Asignando...' : 'Asignar'}
+                                      </button>
+
+                                      <textarea
+                                        value={assignmentDrafts[card.project.id]?.notes || ''}
+                                        onChange={(event) =>
+                                          handleUpdateAssignmentDraft(
+                                            card.project.id,
+                                            'notes',
+                                            event.target.value,
+                                          )
+                                        }
+                                        className="glass-input xl:col-span-3 min-h-[88px]"
+                                        placeholder="Notas para el handoff: entregables, alcance, accesos o dependencias."
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               </>
                             )}

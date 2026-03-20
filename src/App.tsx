@@ -948,7 +948,7 @@ export default function App() {
           </h2>
           <p className="text-white/50">
             {isActivationMode
-              ? 'Completa tu acceso inicial con la invitación del equipo.'
+              ? 'Completa tu acceso inicial con la invitacion recibida.'
               : isResetMode
                 ? 'Define una nueva contraseña y recupera tu sesión.'
                 : isTwoFactorMode

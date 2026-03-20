@@ -2975,6 +2975,13 @@ type ContractDeliveryResult = {
   reason: string | null;
 };
 
+type AccountInviteDeliveryResult = {
+  delivered: boolean;
+  skipped: boolean;
+  channel: "smtp" | "manual";
+  reason: string | null;
+};
+
 let smtpTransporter: Transporter | null | undefined;
 
 const getSmtpTransporter = () => {
@@ -3018,6 +3025,16 @@ const buildPasswordResetUrl = (token: string, req?: express.Request) => {
   }
 
   return `${publicAppUrl}/?reset=${encodeURIComponent(token)}`;
+};
+
+const buildActivationUrl = (token: string, req?: express.Request) => {
+  const publicAppUrl = getPublicAppUrl(req);
+
+  if (!publicAppUrl) {
+    return null;
+  }
+
+  return `${publicAppUrl}/?invite=${encodeURIComponent(token)}`;
 };
 
 const sendPasswordResetEmail = async ({
@@ -3075,6 +3092,72 @@ const sendPasswordResetEmail = async ({
     skipped: false,
     reason: null,
   } as const;
+};
+
+const sendActivationEmail = async ({
+  to,
+  name,
+  agencyName,
+  inviteUrl,
+  roleLabel,
+}: {
+  to: string;
+  name: string;
+  agencyName: string;
+  inviteUrl: string;
+  roleLabel: string;
+}) => {
+  const transporter = getSmtpTransporter();
+
+  if (!transporter) {
+    return {
+      delivered: false,
+      skipped: true,
+      channel: "manual",
+      reason: "smtp_not_configured",
+    } satisfies AccountInviteDeliveryResult;
+  }
+
+  const roleLine =
+    roleLabel.trim().length > 0
+      ? `Se te ha preparado acceso como ${roleLabel.toLowerCase()} en ${agencyName}.`
+      : `Se te ha preparado acceso a ${agencyName}.`;
+
+  await transporter.sendMail({
+    from: getMailFromAddress(),
+    to,
+    subject: `Activa tu acceso · ${agencyName}`,
+    text: [
+      `Hola ${name},`,
+      "",
+      roleLine,
+      `Activa tu cuenta desde este enlace: ${inviteUrl}`,
+      "",
+      "En el primer acceso podras definir tu contrasena.",
+      "Si no esperabas esta invitacion, puedes ignorar este mensaje.",
+    ].join("\n"),
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #111827;">
+        <h2 style="margin-bottom: 16px;">Activa tu acceso</h2>
+        <p>Hola ${name},</p>
+        <p>${roleLine}</p>
+        <p style="margin: 24px 0;">
+          <a href="${inviteUrl}" style="display: inline-block; background: #0066ff; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 10px; font-weight: 600;">
+            Activar cuenta
+          </a>
+        </p>
+        <p>En el primer acceso podras definir tu contrasena.</p>
+        <p>Si no esperabas esta invitacion, puedes ignorar este mensaje.</p>
+      </div>
+    `,
+  });
+
+  return {
+    delivered: true,
+    skipped: false,
+    channel: "smtp",
+    reason: null,
+  } satisfies AccountInviteDeliveryResult;
 };
 
 const sendLoginAlertEmail = async ({
@@ -4903,6 +4986,301 @@ const getUserRecordByActivationToken = (token: string) =>
       }
     | undefined;
 
+const isExternalLinkedUser = (user: {
+  role: string;
+  client_id?: number | null;
+  freelancer_id?: number | null;
+}) => {
+  const roleKey = getRoleKey(user.role);
+  return (
+    roleKey === "client" ||
+    roleKey === "freelancer" ||
+    Number.isInteger(Number(user.client_id)) ||
+    Number.isInteger(Number(user.freelancer_id))
+  );
+};
+
+const shouldUseTeamOnboardingForUser = (user: {
+  role: string;
+  client_id?: number | null;
+  freelancer_id?: number | null;
+}) => !isExternalLinkedUser(user);
+
+const getLinkedClientUserRecord = (agencyId: number, clientId: number) =>
+  db
+    .prepare(
+      `
+        SELECT *
+        FROM users
+        WHERE agency_id = ? AND client_id = ?
+        ORDER BY
+          CASE COALESCE(access_status, 'active')
+            WHEN 'active' THEN 0
+            ELSE 1
+          END,
+          id ASC
+        LIMIT 1
+      `,
+    )
+    .get(agencyId, clientId) as ReturnType<typeof getUserRecordByIdFull>;
+
+const getLinkedFreelancerUserRecord = (agencyId: number, freelancerId: number) =>
+  db
+    .prepare(
+      `
+        SELECT *
+        FROM users
+        WHERE agency_id = ? AND freelancer_id = ?
+        ORDER BY
+          CASE COALESCE(access_status, 'active')
+            WHEN 'active' THEN 0
+            ELSE 1
+          END,
+          id ASC
+        LIMIT 1
+      `,
+    )
+    .get(agencyId, freelancerId) as ReturnType<typeof getUserRecordByIdFull>;
+
+const serializePortalAccessUser = (
+  user: ReturnType<typeof getUserRecordByIdFull> | null | undefined,
+  req?: express.Request,
+) => {
+  if (!user) {
+    return null;
+  }
+
+  const accessStatus = (user.access_status || "active") as UserAccessStatus;
+
+  return {
+    user_id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    access_status: accessStatus,
+    invited_at: user.invited_at,
+    activated_at: user.activated_at,
+    invite_url:
+      accessStatus === "invited" && user.activation_token
+        ? buildActivationUrl(user.activation_token, req)
+        : null,
+  };
+};
+
+const canReceiveTaskAssignment = (
+  user: NonNullable<ReturnType<typeof getUserRecordByIdFull>>,
+) => {
+  if (!canAccessSection(user.role, "tasks")) {
+    return false;
+  }
+
+  if (getRoleKey(user.role) === "freelancer" && !Number.isInteger(Number(user.freelancer_id))) {
+    return false;
+  }
+
+  return true;
+};
+
+const getTaskAssignableUsersForAgency = (agencyId: number) =>
+  (
+    db
+      .prepare(
+        `
+          SELECT id
+          FROM users
+          WHERE agency_id = ?
+            AND COALESCE(access_status, 'active') IN ('active', 'invited')
+          ORDER BY lower(name) ASC, id ASC
+        `,
+      )
+      .all(agencyId) as Array<{ id: number }>
+  )
+    .map((row) => getUserRecordByIdFull(row.id))
+    .filter(
+      (
+        user,
+      ): user is NonNullable<ReturnType<typeof getUserRecordByIdFull>> =>
+        Boolean(user && canReceiveTaskAssignment(user)),
+    );
+
+const getTaskAssignableUserById = (agencyId: number, userId: number) => {
+  const user = getUserRecordByIdFull(userId);
+
+  if (!user || user.agency_id !== agencyId) {
+    return null;
+  }
+
+  if (!["active", "invited"].includes(user.access_status || "active")) {
+    return null;
+  }
+
+  if (!canReceiveTaskAssignment(user)) {
+    return null;
+  }
+
+  return user;
+};
+
+const ensurePortalUserAccess = ({
+  agencyId,
+  entityType,
+  entityId,
+  name,
+  email,
+}: {
+  agencyId: number;
+  entityType: "client" | "freelancer";
+  entityId: number;
+  name: string;
+  email: string;
+}) => {
+  const normalizedName = name.trim();
+  const normalizedEmail = email.trim().toLowerCase();
+  const linkedColumn = entityType === "client" ? "client_id" : "freelancer_id";
+  const otherLinkedColumn = entityType === "client" ? "freelancer_id" : "client_id";
+  const desiredRole = entityType === "client" ? "Client" : "Freelancer";
+  const existingUser = getUserRecordByEmailFull(normalizedEmail);
+
+  if (!normalizedName) {
+    return {
+      error:
+        entityType === "client"
+          ? "Client contact name is required"
+          : "Freelancer name is required",
+    } as const;
+  }
+
+  if (!normalizedEmail) {
+    return {
+      error:
+        entityType === "client"
+          ? "Client contact email is required"
+          : "Freelancer email is required",
+    } as const;
+  }
+
+  if (existingUser && existingUser.agency_id !== agencyId) {
+    return { error: "Email already exists in another agency" } as const;
+  }
+
+  if (existingUser) {
+    const roleKey = getRoleKey(existingUser.role);
+    const existingLinkedEntityId =
+      entityType === "client" ? existingUser.client_id : existingUser.freelancer_id;
+    const otherLinkedEntityId =
+      entityType === "client" ? existingUser.freelancer_id : existingUser.client_id;
+
+    if (roleKey !== entityType) {
+      return { error: "Email already belongs to a different internal role" } as const;
+    }
+
+    if (otherLinkedEntityId) {
+      return { error: "This user is already linked to another external profile" } as const;
+    }
+
+    if (existingLinkedEntityId && existingLinkedEntityId !== entityId) {
+      return {
+        error:
+          entityType === "client"
+            ? "This email is already linked to another client portal"
+            : "This email is already linked to another freelancer portal",
+      } as const;
+    }
+
+    const isInvited = (existingUser.access_status || "active") === "invited";
+    const nextActivationToken = isInvited ? createInviteToken() : null;
+    const nextInvitedAt = isInvited ? new Date().toISOString() : existingUser.invited_at;
+
+    db.prepare(
+      `
+        UPDATE users
+        SET
+          email = ?,
+          name = ?,
+          role = ?,
+          ${linkedColumn} = ?,
+          ${otherLinkedColumn} = NULL,
+          activation_token = ?,
+          invited_at = ?,
+          status = COALESCE(status, 'offline')
+        WHERE id = ?
+      `,
+    ).run(
+      normalizedEmail,
+      normalizedName,
+      desiredRole,
+      entityId,
+      nextActivationToken,
+      nextInvitedAt,
+      existingUser.id,
+    );
+
+    return {
+      user: getUserRecordByIdFull(existingUser.id),
+      created: false,
+      linked_existing: !existingLinkedEntityId,
+      invite_required: isInvited,
+      already_active: !isInvited,
+    } as const;
+  }
+
+  const activationToken = createInviteToken();
+  const invitedAt = new Date().toISOString();
+  const result = db
+    .prepare(
+      `
+        INSERT INTO users (
+          email,
+          password,
+          name,
+          role,
+          client_id,
+          freelancer_id,
+          agency_id,
+          status,
+          access_status,
+          activation_token,
+          invited_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'offline', 'invited', ?, ?)
+      `,
+    )
+    .run(
+      normalizedEmail,
+      hashPassword(randomBytes(18).toString("hex")),
+      normalizedName,
+      desiredRole,
+      entityType === "client" ? entityId : null,
+      entityType === "freelancer" ? entityId : null,
+      agencyId,
+      activationToken,
+      invitedAt,
+    );
+
+  return {
+    user: getUserRecordByIdFull(Number(result.lastInsertRowid)),
+    created: true,
+    linked_existing: false,
+    invite_required: true,
+    already_active: false,
+  } as const;
+};
+
+const resetPortalInviteForUser = (userId: number) => {
+  const invitedAt = new Date().toISOString();
+  const activationToken = createInviteToken();
+
+  db.prepare(
+    `
+      UPDATE users
+      SET activation_token = ?, invited_at = ?
+      WHERE id = ?
+    `,
+  ).run(activationToken, invitedAt, userId);
+
+  return getUserRecordByIdFull(userId);
+};
+
 const createPasswordResetToken = () => randomBytes(24).toString("hex");
 
 const clearExpiredPasswordResetTokens = () => {
@@ -6280,10 +6658,14 @@ const getTaskRecordByIdFull = (taskId: number) =>
       `
         SELECT
           tasks.*,
+          COALESCE(tasks.description, '') as description,
+          users.name as assigned_name,
+          users.access_status as assignee_access_status,
           projects.name as project_name,
           projects.client_id as client_id,
           clients.company as client_name
         FROM tasks
+        LEFT JOIN users ON users.id = tasks.assigned_to
         LEFT JOIN projects ON projects.id = tasks.project_id
         LEFT JOIN clients ON clients.id = projects.client_id
         WHERE tasks.id = ?
@@ -6300,6 +6682,8 @@ const getTaskRecordByIdFull = (taskId: number) =>
         priority: "low" | "medium" | "high";
         due_date: string;
         assigned_to: number | null;
+        assigned_name: string | null;
+        assignee_access_status: UserAccessStatus | null;
         archived_at: string | null;
         agency_id: number;
         project_name: string | null;
@@ -6758,9 +7142,13 @@ const serializeServicePriceRow = (servicePrice: ServicePriceRow) => ({
   is_active: servicePrice.is_active === 1,
 });
 
-const serializeFreelancerRow = (freelancer: FreelancerRow) => ({
+const serializeFreelancerRow = (freelancer: FreelancerRow, req?: express.Request) => ({
   ...freelancer,
   payout_integration_name: getIntegrationDisplayName(freelancer.payout_integration_key),
+  portal_access: serializePortalAccessUser(
+    getLinkedFreelancerUserRecord(freelancer.agency_id, freelancer.id),
+    req,
+  ),
 });
 
 const getContractRecordById = (contractId: number) =>
@@ -8920,6 +9308,7 @@ const getClientManagementOverview = (
   clientId: number,
   agencyId: number,
   includeArchived = false,
+  req?: express.Request,
 ) => {
   const client = getClientRecordById(clientId);
 
@@ -9080,6 +9469,7 @@ const getClientManagementOverview = (
   return {
     client_id: client.id,
     currency,
+    portal_access: serializePortalAccessUser(getLinkedClientUserRecord(agencyId, client.id), req),
     contact: {
       name: lead?.name || null,
       email: lead?.email || null,
@@ -9711,7 +10101,11 @@ const buildTeamMemberResponse = (
 ) => {
   const user = getUserRecordByIdFull(userId);
 
-  if (!user || (agencyId && user.agency_id !== agencyId)) {
+  if (
+    !user ||
+    (agencyId && user.agency_id !== agencyId) ||
+    !shouldUseTeamOnboardingForUser(user)
+  ) {
     return null;
   }
 
@@ -11135,13 +11529,15 @@ async function startServer() {
       return res.status(404).json({ error: "Invitation not found" });
     }
 
-    const onboardingId = ensureTeamOnboardingForUser(user.id, user.agency_id || null);
+    const onboardingId = shouldUseTeamOnboardingForUser(user)
+      ? ensureTeamOnboardingForUser(user.id, user.agency_id || null)
+      : null;
 
     res.json({
       name: user.name,
       email: user.email,
       role: user.role,
-      onboarding: serializeTeamOnboarding(onboardingId),
+      onboarding: onboardingId ? serializeTeamOnboarding(onboardingId) : null,
     });
   });
 
@@ -11170,8 +11566,10 @@ async function startServer() {
       return res.status(400).json({ error: "Agency not found" });
     }
 
-    const onboardingId = ensureTeamOnboardingForUser(user.id, agencyId);
-    const onboardingSteps = getTeamOnboardingSteps(onboardingId);
+    const onboardingId = shouldUseTeamOnboardingForUser(user)
+      ? ensureTeamOnboardingForUser(user.id, agencyId)
+      : null;
+    const onboardingSteps = onboardingId ? getTeamOnboardingSteps(onboardingId) : [];
     const activationStep = onboardingSteps.find((step) => step.sort_order === 1) || onboardingSteps[0];
 
     db.prepare(
@@ -12787,6 +13185,34 @@ async function startServer() {
     },
   );
 
+  app.get(
+    "/api/task-assignees",
+    requireAnySectionAccess(["tasks", "projects", "team", "contracts"]),
+    (req, res) => {
+      const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+
+      if (!context) {
+        return res.status(400).json({ error: "Agency not found" });
+      }
+
+      if (isExternalPortalUser(context.authUser)) {
+        return res.status(403).json({ error: "Portal users cannot access assignee options" });
+      }
+
+      res.json(
+        getTaskAssignableUsersForAgency(context.agencyId).map((user) => ({
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          access_status: (user.access_status || "active") as UserAccessStatus,
+          client_id: user.client_id,
+          freelancer_id: user.freelancer_id,
+        })),
+      );
+    },
+  );
+
   app.get("/api/referral-overview", requireSectionAccess("referrals"), (req, res) => {
     const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
 
@@ -13920,7 +14346,7 @@ async function startServer() {
       )
       .all(context.agencyId) as FreelancerRow[];
 
-    res.json(rows.map(serializeFreelancerRow));
+    res.json(rows.map((row) => serializeFreelancerRow(row, req)));
   });
 
   app.post("/api/freelancers", requireSectionAccess("contracts"), (req, res) => {
@@ -14004,7 +14430,7 @@ async function startServer() {
       );
 
     const freelancer = getFreelancerRecordById(Number(result.lastInsertRowid));
-    res.status(201).json(freelancer ? serializeFreelancerRow(freelancer) : null);
+    res.status(201).json(freelancer ? serializeFreelancerRow(freelancer, req) : null);
   });
 
   app.patch("/api/freelancers/:id", requireSectionAccess("contracts"), (req, res) => {
@@ -14094,8 +14520,375 @@ async function startServer() {
     );
 
     const updatedFreelancer = getFreelancerRecordById(freelancer.id);
-    res.json(updatedFreelancer ? serializeFreelancerRow(updatedFreelancer) : null);
+    res.json(updatedFreelancer ? serializeFreelancerRow(updatedFreelancer, req) : null);
   });
+
+  app.post("/api/freelancers/:id/portal-access/invite", requireSectionAccess("contracts"), async (req, res) => {
+    const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+    const freelancerId = Number(req.params.id);
+    const freelancer = Number.isInteger(freelancerId) ? getFreelancerRecordById(freelancerId) : undefined;
+
+    if (!context) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (!freelancer || freelancer.agency_id !== context.agencyId) {
+      return res.status(404).json({ error: "Freelancer not found" });
+    }
+
+    const result = ensurePortalUserAccess({
+      agencyId: context.agencyId,
+      entityType: "freelancer",
+      entityId: freelancer.id,
+      name:
+        typeof req.body?.name === "string" && req.body.name.trim()
+          ? req.body.name.trim()
+          : freelancer.name,
+      email:
+        typeof req.body?.email === "string" && req.body.email.trim()
+          ? req.body.email.trim()
+          : freelancer.email,
+    });
+
+    if ("error" in result) {
+      return res.status(result.error.includes("required") ? 400 : 409).json({ error: result.error });
+    }
+
+    if (!result.user) {
+      return res.status(500).json({ error: "Freelancer portal user could not be prepared" });
+    }
+
+    let delivery: AccountInviteDeliveryResult = {
+      delivered: false,
+      skipped: true,
+      channel: "manual",
+      reason: result.already_active ? "already_active" : "missing_invite_url",
+    };
+
+    if (result.invite_required && result.user.activation_token) {
+      const inviteUrl = buildActivationUrl(result.user.activation_token, req);
+      delivery = inviteUrl
+        ? await sendActivationEmail({
+            to: result.user.email,
+            name: result.user.name,
+            agencyName: getAppSettings(context.agencyId).agency_name,
+            inviteUrl,
+            roleLabel: "freelancer",
+          })
+        : {
+            delivered: false,
+            skipped: true,
+            channel: "manual",
+            reason: "missing_invite_url",
+          };
+    }
+
+    createAuditLog({
+      action: result.invite_required ? "freelancer.portal_invited" : "freelancer.portal_linked",
+      entityType: "freelancer",
+      entityId: freelancer.id,
+      description: result.invite_required
+        ? `Se preparo acceso portal para ${freelancer.name}.`
+        : `Se vinculo acceso portal ya activo para ${freelancer.name}.`,
+      authUser: context.authUser,
+      agencyId: context.agencyId,
+      metadata: {
+        freelancer_id: freelancer.id,
+        user_id: result.user.id,
+        email: result.user.email,
+        delivery: delivery.delivered ? "sent" : delivery.reason,
+        created: result.created,
+        linked_existing: result.linked_existing,
+      },
+    });
+
+    res.status(result.created ? 201 : 200).json({
+      access: serializePortalAccessUser(result.user, req),
+      delivery,
+      created: result.created,
+      linked_existing: result.linked_existing,
+      already_active: result.already_active,
+    });
+  });
+
+  app.post("/api/freelancers/:id/portal-access/resend", requireSectionAccess("contracts"), async (req, res) => {
+    const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+    const freelancerId = Number(req.params.id);
+    const freelancer = Number.isInteger(freelancerId) ? getFreelancerRecordById(freelancerId) : undefined;
+
+    if (!context) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (!freelancer || freelancer.agency_id !== context.agencyId) {
+      return res.status(404).json({ error: "Freelancer not found" });
+    }
+
+    const linkedUser = getLinkedFreelancerUserRecord(context.agencyId, freelancer.id);
+
+    if (!linkedUser) {
+      return res.status(404).json({ error: "Freelancer portal access has not been configured yet" });
+    }
+
+    if ((linkedUser.access_status || "active") !== "invited") {
+      return res.status(400).json({ error: "Freelancer portal access is already active" });
+    }
+
+    const refreshedUser = resetPortalInviteForUser(linkedUser.id);
+
+    if (!refreshedUser || !refreshedUser.activation_token) {
+      return res.status(500).json({ error: "Freelancer portal invite could not be regenerated" });
+    }
+
+    const inviteUrl = buildActivationUrl(refreshedUser.activation_token, req);
+    const delivery = inviteUrl
+      ? await sendActivationEmail({
+          to: refreshedUser.email,
+          name: refreshedUser.name,
+          agencyName: getAppSettings(context.agencyId).agency_name,
+          inviteUrl,
+          roleLabel: "freelancer",
+        })
+      : {
+          delivered: false,
+          skipped: true,
+          channel: "manual",
+          reason: "missing_invite_url",
+        };
+
+    createAuditLog({
+      action: "freelancer.portal_invite_resent",
+      entityType: "freelancer",
+      entityId: freelancer.id,
+      description: `Se reenvio el acceso portal para ${freelancer.name}.`,
+      authUser: context.authUser,
+      agencyId: context.agencyId,
+      metadata: {
+        freelancer_id: freelancer.id,
+        user_id: refreshedUser.id,
+        email: refreshedUser.email,
+        delivery: delivery.delivered ? "sent" : delivery.reason,
+      },
+    });
+
+    res.json({
+      access: serializePortalAccessUser(refreshedUser, req),
+      delivery,
+      resent: true,
+    });
+  });
+
+  app.get(
+    "/api/freelancer-project-assignments",
+    requireAnySectionAccess(["projects", "contracts"]),
+    (req, res) => {
+      const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+      const projectId = Number(req.query.project_id || 0);
+      const freelancerId = Number(req.query.freelancer_id || 0);
+
+      if (!context) {
+        return res.status(400).json({ error: "Agency not found" });
+      }
+
+      if (isExternalPortalUser(context.authUser)) {
+        return res.status(403).json({ error: "Portal users cannot manage freelancer assignments" });
+      }
+
+      const rows = db
+        .prepare(
+          `
+            SELECT
+              freelancer_project_assignments.*,
+              projects.name as project_name,
+              projects.client_id as client_id,
+              clients.company as client_name,
+              freelancers.name as freelancer_name,
+              freelancers.email as freelancer_email
+            FROM freelancer_project_assignments
+            INNER JOIN projects ON projects.id = freelancer_project_assignments.project_id
+            INNER JOIN freelancers ON freelancers.id = freelancer_project_assignments.freelancer_id
+            LEFT JOIN clients ON clients.id = projects.client_id
+            WHERE freelancer_project_assignments.agency_id = ?
+              AND freelancer_project_assignments.status != 'archived'
+              AND (? <= 0 OR freelancer_project_assignments.project_id = ?)
+              AND (? <= 0 OR freelancer_project_assignments.freelancer_id = ?)
+            ORDER BY datetime(freelancer_project_assignments.created_at) DESC, freelancer_project_assignments.id DESC
+          `,
+        )
+        .all(context.agencyId, projectId, projectId, freelancerId, freelancerId);
+
+      res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/freelancer-project-assignments",
+    requireAnySectionAccess(["projects", "contracts"]),
+    (req, res) => {
+      const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+      const projectId = Number(req.body?.project_id);
+      const freelancerId = Number(req.body?.freelancer_id);
+      const roleLabel =
+        typeof req.body?.role_label === "string" && req.body.role_label.trim()
+          ? req.body.role_label.trim()
+          : null;
+      const notes =
+        typeof req.body?.notes === "string" && req.body.notes.trim() ? req.body.notes.trim() : null;
+
+      if (!context) {
+        return res.status(400).json({ error: "Agency not found" });
+      }
+
+      if (isExternalPortalUser(context.authUser)) {
+        return res.status(403).json({ error: "Portal users cannot manage freelancer assignments" });
+      }
+
+      const project = Number.isInteger(projectId) ? getProjectRecordByIdFull(projectId) : undefined;
+      const freelancer = Number.isInteger(freelancerId) ? getFreelancerRecordById(freelancerId) : undefined;
+
+      if (!project || project.agency_id !== context.agencyId || isArchivedRecord(project)) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!freelancer || freelancer.agency_id !== context.agencyId) {
+        return res.status(404).json({ error: "Freelancer not found" });
+      }
+
+      const existingAssignment = db
+        .prepare(
+          `
+            SELECT *
+            FROM freelancer_project_assignments
+            WHERE agency_id = ? AND project_id = ? AND freelancer_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(context.agencyId, project.id, freelancer.id) as FreelancerProjectAssignmentRow | undefined;
+
+      if (existingAssignment) {
+        db.prepare(
+          `
+            UPDATE freelancer_project_assignments
+            SET
+              role_label = ?,
+              notes = ?,
+              status = 'active',
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `,
+        ).run(roleLabel, notes, existingAssignment.id);
+      } else {
+        db.prepare(
+          `
+            INSERT INTO freelancer_project_assignments (
+              project_id,
+              freelancer_id,
+              role_label,
+              notes,
+              status,
+              agency_id,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, 'active', ?, CURRENT_TIMESTAMP)
+          `,
+        ).run(project.id, freelancer.id, roleLabel, notes, context.agencyId);
+      }
+
+      createAuditLog({
+        action: existingAssignment
+          ? "freelancer.assignment_updated"
+          : "freelancer.assignment_created",
+        entityType: "project",
+        entityId: project.id,
+        description: existingAssignment
+          ? `Se actualizo la asignacion de ${freelancer.name} al proyecto ${project.name}.`
+          : `Se asigno ${freelancer.name} al proyecto ${project.name}.`,
+        authUser: context.authUser,
+        agencyId: context.agencyId,
+        metadata: {
+          project_id: project.id,
+          freelancer_id: freelancer.id,
+          role_label: roleLabel,
+        },
+      });
+
+      const assignment = db
+        .prepare(
+          `
+            SELECT
+              freelancer_project_assignments.*,
+              projects.name as project_name,
+              projects.client_id as client_id,
+              clients.company as client_name,
+              freelancers.name as freelancer_name,
+              freelancers.email as freelancer_email
+            FROM freelancer_project_assignments
+            INNER JOIN projects ON projects.id = freelancer_project_assignments.project_id
+            INNER JOIN freelancers ON freelancers.id = freelancer_project_assignments.freelancer_id
+            LEFT JOIN clients ON clients.id = projects.client_id
+            WHERE freelancer_project_assignments.agency_id = ?
+              AND freelancer_project_assignments.project_id = ?
+              AND freelancer_project_assignments.freelancer_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(context.agencyId, project.id, freelancer.id);
+
+      res.status(existingAssignment ? 200 : 201).json(assignment);
+    },
+  );
+
+  app.delete(
+    "/api/freelancer-project-assignments/:id",
+    requireAnySectionAccess(["projects", "contracts"]),
+    (req, res) => {
+      const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+      const assignmentId = Number(req.params.id);
+      const assignment = Number.isInteger(assignmentId)
+        ? (db
+            .prepare("SELECT * FROM freelancer_project_assignments WHERE id = ?")
+            .get(assignmentId) as FreelancerProjectAssignmentRow | undefined)
+        : undefined;
+
+      if (!context) {
+        return res.status(400).json({ error: "Agency not found" });
+      }
+
+      if (isExternalPortalUser(context.authUser)) {
+        return res.status(403).json({ error: "Portal users cannot manage freelancer assignments" });
+      }
+
+      if (!assignment || assignment.agency_id !== context.agencyId) {
+        return res.status(404).json({ error: "Assignment not found" });
+      }
+
+      db.prepare(
+        `
+          UPDATE freelancer_project_assignments
+          SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `,
+      ).run(assignment.id);
+
+      const project = getProjectRecordByIdFull(assignment.project_id);
+      const freelancer = getFreelancerRecordById(assignment.freelancer_id);
+
+      createAuditLog({
+        action: "freelancer.assignment_archived",
+        entityType: "project",
+        entityId: assignment.project_id,
+        description: `Se retiro ${freelancer?.name || `freelancer #${assignment.freelancer_id}`} del proyecto ${project?.name || `#${assignment.project_id}`}.`,
+        authUser: context.authUser,
+        agencyId: context.agencyId,
+        metadata: {
+          project_id: assignment.project_id,
+          freelancer_id: assignment.freelancer_id,
+        },
+      });
+
+      res.json({ deleted: true, id: assignment.id });
+    },
+  );
 
   app.get("/api/contracts/overview", requireSectionAccess("contracts"), (req, res) => {
     const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
@@ -18048,6 +18841,12 @@ async function startServer() {
       return res.status(400).json({ error: "Role is required" });
     }
 
+    if (!shouldUseTeamOnboardingForUser({ role, client_id: null, freelancer_id: null })) {
+      return res.status(400).json({
+        error: "Client and freelancer access must be managed from their portal modules",
+      });
+    }
+
     if (status && !allowedStatuses.has(status)) {
       return res.status(400).json({ error: "Invalid team status" });
     }
@@ -18121,6 +18920,12 @@ async function startServer() {
       return res.status(404).json({ error: "User not found" });
     }
 
+    if (!shouldUseTeamOnboardingForUser(user)) {
+      return res.status(400).json({
+        error: "Client and freelancer access must be managed from their portal modules",
+      });
+    }
+
     if ((user.access_status || "active") !== "invited") {
       return res.status(400).json({ error: "User is already active" });
     }
@@ -18166,6 +18971,18 @@ async function startServer() {
 
     if (!Number.isInteger(userId) || !allowedStatuses.has(status)) {
       return res.status(400).json({ error: "Invalid user id or status" });
+    }
+
+    const user = getUserRecordByIdFull(userId);
+
+    if (!user || user.agency_id !== context.agencyId) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!shouldUseTeamOnboardingForUser(user)) {
+      return res.status(400).json({
+        error: "Client and freelancer access must be managed from their portal modules",
+      });
     }
 
     const result = db
@@ -18295,10 +19112,168 @@ async function startServer() {
     res.json(
       clientRows
         .map((clientRow) =>
-          getClientManagementOverview(clientRow.id, context.agencyId, archiveScope !== "active"),
+          getClientManagementOverview(clientRow.id, context.agencyId, archiveScope !== "active", req),
         )
         .filter(Boolean),
     );
+  });
+
+  app.post("/api/clients/:id/portal-access/invite", requireSectionAccess("clients"), async (req, res) => {
+    const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+    const clientId = Number(req.params.id);
+    const client = Number.isInteger(clientId) ? getClientRecordById(clientId) : undefined;
+    const lead = client?.lead_id ? getLeadRecordById(client.lead_id) : null;
+    const contactName =
+      typeof req.body?.name === "string" && req.body.name.trim()
+        ? req.body.name.trim()
+        : lead?.name?.trim() || client?.company?.trim() || "";
+    const contactEmail =
+      typeof req.body?.email === "string" && req.body.email.trim()
+        ? req.body.email.trim()
+        : lead?.email?.trim() || "";
+
+    if (!context) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (!client || !isAgencyOwnedRecord(client, context.agencyId) || isArchivedRecord(client)) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const result = ensurePortalUserAccess({
+      agencyId: context.agencyId,
+      entityType: "client",
+      entityId: client.id,
+      name: contactName,
+      email: contactEmail,
+    });
+
+    if ("error" in result) {
+      return res.status(result.error.includes("required") ? 400 : 409).json({ error: result.error });
+    }
+
+    if (!result.user) {
+      return res.status(500).json({ error: "Client portal user could not be prepared" });
+    }
+
+    let delivery: AccountInviteDeliveryResult = {
+      delivered: false,
+      skipped: true,
+      channel: "manual",
+      reason: result.already_active ? "already_active" : "missing_invite_url",
+    };
+
+    if (result.invite_required && result.user.activation_token) {
+      const inviteUrl = buildActivationUrl(result.user.activation_token, req);
+      delivery = inviteUrl
+        ? await sendActivationEmail({
+            to: result.user.email,
+            name: result.user.name,
+            agencyName: getAppSettings(context.agencyId).agency_name,
+            inviteUrl,
+            roleLabel: "cliente",
+          })
+        : {
+            delivered: false,
+            skipped: true,
+            channel: "manual",
+            reason: "missing_invite_url",
+          };
+    }
+
+    createAuditLog({
+      action: result.invite_required ? "client.portal_invited" : "client.portal_linked",
+      entityType: "client",
+      entityId: client.id,
+      description: result.invite_required
+        ? `Se preparo acceso portal para el cliente ${client.company}.`
+        : `Se vinculo acceso portal ya activo para el cliente ${client.company}.`,
+      authUser: context.authUser,
+      agencyId: context.agencyId,
+      metadata: {
+        client_id: client.id,
+        user_id: result.user.id,
+        email: result.user.email,
+        delivery: delivery.delivered ? "sent" : delivery.reason,
+        created: result.created,
+        linked_existing: result.linked_existing,
+      },
+    });
+
+    res.status(result.created ? 201 : 200).json({
+      access: serializePortalAccessUser(result.user, req),
+      delivery,
+      created: result.created,
+      linked_existing: result.linked_existing,
+      already_active: result.already_active,
+    });
+  });
+
+  app.post("/api/clients/:id/portal-access/resend", requireSectionAccess("clients"), async (req, res) => {
+    const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+    const clientId = Number(req.params.id);
+    const client = Number.isInteger(clientId) ? getClientRecordById(clientId) : undefined;
+
+    if (!context) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (!client || !isAgencyOwnedRecord(client, context.agencyId) || isArchivedRecord(client)) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const linkedUser = getLinkedClientUserRecord(context.agencyId, client.id);
+
+    if (!linkedUser) {
+      return res.status(404).json({ error: "Client portal access has not been configured yet" });
+    }
+
+    if ((linkedUser.access_status || "active") !== "invited") {
+      return res.status(400).json({ error: "Client portal access is already active" });
+    }
+
+    const refreshedUser = resetPortalInviteForUser(linkedUser.id);
+
+    if (!refreshedUser || !refreshedUser.activation_token) {
+      return res.status(500).json({ error: "Client portal invite could not be regenerated" });
+    }
+
+    const inviteUrl = buildActivationUrl(refreshedUser.activation_token, req);
+    const delivery = inviteUrl
+      ? await sendActivationEmail({
+          to: refreshedUser.email,
+          name: refreshedUser.name,
+          agencyName: getAppSettings(context.agencyId).agency_name,
+          inviteUrl,
+          roleLabel: "cliente",
+        })
+      : {
+          delivered: false,
+          skipped: true,
+          channel: "manual",
+          reason: "missing_invite_url",
+        };
+
+    createAuditLog({
+      action: "client.portal_invite_resent",
+      entityType: "client",
+      entityId: client.id,
+      description: `Se reenvio el acceso portal para el cliente ${client.company}.`,
+      authUser: context.authUser,
+      agencyId: context.agencyId,
+      metadata: {
+        client_id: client.id,
+        user_id: refreshedUser.id,
+        email: refreshedUser.email,
+        delivery: delivery.delivered ? "sent" : delivery.reason,
+      },
+    });
+
+    res.json({
+      access: serializePortalAccessUser(refreshedUser, req),
+      delivery,
+      resent: true,
+    });
   });
 
   app.get("/api/client-onboarding-documents/:id", requireSectionAccess("clients"), (req, res) => {
@@ -19686,7 +20661,17 @@ async function startServer() {
     const archiveScope = getArchiveScopeFromQuery(req.query as Record<string, unknown>);
     const tasks = db
       .prepare(
-        `SELECT * FROM tasks WHERE agency_id = ? AND ${getArchiveSqlCondition(archiveScope)} ORDER BY due_date ASC`,
+        `
+          SELECT
+            tasks.*,
+            COALESCE(tasks.description, '') as description,
+            users.name as assigned_name,
+            users.access_status as assignee_access_status
+          FROM tasks
+          LEFT JOIN users ON users.id = tasks.assigned_to
+          WHERE tasks.agency_id = ? AND ${getArchiveSqlCondition(archiveScope)}
+          ORDER BY datetime(tasks.due_date) ASC, tasks.id ASC
+        `,
       )
       .all(context.agencyId);
     res.json(tasks);
@@ -19694,9 +20679,10 @@ async function startServer() {
 
   app.post("/api/tasks", requireSectionAccess("tasks"), (req, res) => {
     const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
-    const { title, description, priority, due_date, project_id } = req.body ?? {};
+    const { title, description, priority, due_date, project_id, assigned_to } = req.body ?? {};
     const allowedPriorities = new Set(["low", "medium", "high"]);
     const parsedProjectId = Number(project_id);
+    const parsedAssignedTo = assigned_to === null || assigned_to === "" ? null : Number(assigned_to);
     const project =
       Number.isInteger(parsedProjectId) && parsedProjectId > 0
         ? getProjectById(parsedProjectId)
@@ -19733,11 +20719,22 @@ async function startServer() {
       return res.status(400).json({ error: "Valid due date is required" });
     }
 
+    const assignee =
+      parsedAssignedTo === null
+        ? null
+        : Number.isInteger(parsedAssignedTo) && parsedAssignedTo > 0
+          ? getTaskAssignableUserById(context.agencyId, parsedAssignedTo)
+          : undefined;
+
+    if (parsedAssignedTo !== null && !assignee) {
+      return res.status(400).json({ error: "Assigned user is not valid for task delivery" });
+    }
+
     const result = db
       .prepare(
         `
-          INSERT INTO tasks (project_id, title, description, status, priority, due_date, agency_id)
-          VALUES (?, ?, ?, 'todo', ?, ?, ?)
+          INSERT INTO tasks (project_id, title, description, status, priority, due_date, assigned_to, agency_id)
+          VALUES (?, ?, ?, 'todo', ?, ?, ?, ?)
         `,
       )
       .run(
@@ -19746,10 +20743,11 @@ async function startServer() {
         typeof description === "string" ? description.trim() : "",
         priority || "medium",
         due_date,
+        assignee?.id || null,
         resolvedProject.agency_id,
       );
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(result.lastInsertRowid);
+    const task = getTaskRecordByIdFull(Number(result.lastInsertRowid));
     syncTaskCalendarEvent(Number(result.lastInsertRowid));
     createAuditLog({
       action: "task.created",
@@ -19761,9 +20759,76 @@ async function startServer() {
         project_id: resolvedProject.id,
         priority: priority || "medium",
         due_date,
+        assigned_to: assignee?.id || null,
       },
     });
     res.status(201).json(task);
+  });
+
+  app.patch("/api/tasks/:id/assignment", requireSectionAccess("tasks"), (req, res) => {
+    const context = getAgencyRequestContext(res.locals.authUser as AuthUser | undefined);
+    const taskId = Number(req.params.id);
+    const parsedAssignedTo =
+      req.body?.assigned_to === null || req.body?.assigned_to === ""
+        ? null
+        : Number(req.body?.assigned_to);
+
+    if (!context) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (isExternalPortalUser(context.authUser)) {
+      return res.status(403).json({ error: "Portal users cannot reassign tasks from this module" });
+    }
+
+    if (!Number.isInteger(taskId)) {
+      return res.status(400).json({ error: "Invalid task id" });
+    }
+
+    const task = getTaskRecordByIdFull(taskId);
+
+    if (!task || !isAgencyOwnedRecord(task, context.agencyId) || isArchivedRecord(task)) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    const assignee =
+      parsedAssignedTo === null
+        ? null
+        : Number.isInteger(parsedAssignedTo) && parsedAssignedTo > 0
+          ? getTaskAssignableUserById(context.agencyId, parsedAssignedTo)
+          : undefined;
+
+    if (parsedAssignedTo !== null && !assignee) {
+      return res.status(400).json({ error: "Assigned user is not valid for task delivery" });
+    }
+
+    db.prepare(
+      `
+        UPDATE tasks
+        SET assigned_to = ?
+        WHERE id = ? AND agency_id = ? AND archived_at IS NULL
+      `,
+    ).run(assignee?.id || null, task.id, context.agencyId);
+
+    syncTaskCalendarEvent(task.id);
+    const updatedTask = getTaskRecordByIdFull(task.id);
+
+    createAuditLog({
+      action: "task.assignment_updated",
+      entityType: "task",
+      entityId: task.id,
+      description: assignee
+        ? `Se asigno la tarea ${task.title} a ${assignee.name}.`
+        : `Se desasigno la tarea ${task.title}.`,
+      authUser: context.authUser,
+      agencyId: context.agencyId,
+      metadata: {
+        previous_assigned_to: task.assigned_to,
+        assigned_to: assignee?.id || null,
+      },
+    });
+
+    res.json(updatedTask || task);
   });
 
   app.patch("/api/tasks/:id/status", requireSectionAccess("tasks"), (req, res) => {

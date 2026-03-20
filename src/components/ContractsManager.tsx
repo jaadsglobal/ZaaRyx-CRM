@@ -24,6 +24,7 @@ import {
   ContractsOverview,
   Freelancer,
   Integration,
+  PortalInviteResponse,
   ServicePrice,
   TeamMember,
 } from '../types';
@@ -213,6 +214,7 @@ export const ContractsManager: React.FC = () => {
   const [servicePickerId, setServicePickerId] = useState('');
   const [serviceQuantity, setServiceQuantity] = useState('1');
   const [contractTypeFilter, setContractTypeFilter] = useState<'all' | Contract['contract_type']>('all');
+  const [portalActionFreelancerId, setPortalActionFreelancerId] = useState<number | null>(null);
 
   const setMessage = (message: string, tone: 'success' | 'error' = 'success') => {
     setFeedbackTone(tone);
@@ -447,6 +449,85 @@ export const ContractsManager: React.FC = () => {
       setMessage(error instanceof Error ? error.message : 'No se pudo crear el freelance.', 'error');
     } finally {
       setCreatingFreelancer(false);
+    }
+  };
+
+  const handleCopyFreelancerInviteLink = async (inviteUrl: string, freelancerName: string) => {
+    try {
+      if (!navigator.clipboard) {
+        throw new Error('Clipboard API not available');
+      }
+
+      await navigator.clipboard.writeText(inviteUrl);
+      setMessage(`Enlace de invitacion copiado para ${freelancerName}.`);
+    } catch (error) {
+      console.error('Error copying freelancer invite link:', error);
+      setMessage('No se pudo copiar el enlace de invitacion.', 'error');
+    }
+  };
+
+  const handleInviteFreelancerPortal = async (freelancer: Freelancer) => {
+    setPortalActionFreelancerId(freelancer.id);
+
+    try {
+      const response = await fetch(`/api/freelancers/${freelancer.id}/portal-access/invite`, {
+        method: 'POST',
+      });
+
+      const result = await getResponseJson<PortalInviteResponse>(response);
+      await loadContractsData(true);
+
+      if (result.already_active) {
+        setMessage(`${freelancer.name} ya tiene acceso activo al portal freelance.`);
+      } else if (result.delivery.delivered) {
+        setMessage(`Invitacion enviada a ${result.access?.email || freelancer.email}.`);
+      } else if (result.access?.invite_url) {
+        setMessage(
+          `Acceso preparado para ${freelancer.name}. SMTP no envio el correo; puedes copiar el enlace desde esta ficha.`,
+        );
+      } else {
+        setMessage(
+          `Acceso preparado para ${freelancer.name}, pero falta una URL publica para compartir la invitacion.`,
+          'error',
+        );
+      }
+    } catch (error) {
+      console.error('Error inviting freelancer portal access:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo preparar el acceso del freelancer.',
+        'error',
+      );
+    } finally {
+      setPortalActionFreelancerId(null);
+    }
+  };
+
+  const handleResendFreelancerPortalInvite = async (freelancer: Freelancer) => {
+    setPortalActionFreelancerId(freelancer.id);
+
+    try {
+      const response = await fetch(`/api/freelancers/${freelancer.id}/portal-access/resend`, {
+        method: 'POST',
+      });
+
+      const result = await getResponseJson<PortalInviteResponse>(response);
+      await loadContractsData(true);
+
+      if (result.delivery.delivered) {
+        setMessage(`Invitacion reenviada a ${result.access?.email || freelancer.email}.`);
+      } else if (result.access?.invite_url) {
+        setMessage(`Invitacion regenerada para ${freelancer.name}. Puedes copiar el enlace desde esta ficha.`);
+      } else {
+        setMessage('No se pudo regenerar la invitacion del freelancer.', 'error');
+      }
+    } catch (error) {
+      console.error('Error resending freelancer portal invite:', error);
+      setMessage(
+        error instanceof Error ? error.message : 'No se pudo reenviar la invitacion del freelancer.',
+        'error',
+      );
+    } finally {
+      setPortalActionFreelancerId(null);
     }
   };
 
@@ -1628,6 +1709,105 @@ export const ContractsManager: React.FC = () => {
                       <p className="text-xs text-white/40">
                         {freelancer.payout_integration_name || freelancer.payment_method || 'Pago pendiente'}
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-white/35 font-bold">
+                          Portal freelance
+                        </p>
+                        <p className="text-sm text-white/60 mt-1">
+                          {freelancer.portal_access
+                            ? freelancer.portal_access.email
+                            : 'Sin usuario enlazado todavia'}
+                        </p>
+                      </div>
+
+                      <span
+                        className={cn(
+                          'px-3 py-1 rounded-full border text-[10px] uppercase tracking-wider font-bold',
+                          freelancer.portal_access
+                            ? freelancer.portal_access.access_status === 'active'
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                              : 'bg-brand-blue/20 text-brand-blue border-brand-blue/20'
+                            : 'bg-white/10 text-white/60 border-white/10',
+                        )}
+                      >
+                        {freelancer.portal_access
+                          ? freelancer.portal_access.access_status === 'active'
+                            ? 'Activo'
+                            : 'Invitado'
+                          : 'Sin acceso'}
+                      </span>
+                    </div>
+
+                    {freelancer.portal_access ? (
+                      <div className="text-xs text-white/40 flex flex-wrap gap-4">
+                        <span>
+                          Invitado:{' '}
+                          {freelancer.portal_access.invited_at
+                            ? new Date(freelancer.portal_access.invited_at).toLocaleDateString('es-ES')
+                            : 'No'}
+                        </span>
+                        <span>
+                          Activado:{' '}
+                          {freelancer.portal_access.activated_at
+                            ? new Date(freelancer.portal_access.activated_at).toLocaleDateString('es-ES')
+                            : 'Pendiente'}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-white/45">
+                        Prepara este acceso para que el freelance vea proyectos, tareas y finanzas desde su portal.
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={portalActionFreelancerId === freelancer.id}
+                        onClick={() => void handleInviteFreelancerPortal(freelancer)}
+                        className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        {portalActionFreelancerId === freelancer.id
+                          ? 'Preparando...'
+                          : freelancer.portal_access
+                            ? freelancer.portal_access.access_status === 'active'
+                              ? 'Actualizar acceso'
+                              : 'Actualizar invitacion'
+                            : 'Invitar al portal'}
+                      </button>
+
+                      {freelancer.portal_access?.access_status === 'invited' ? (
+                        <button
+                          type="button"
+                          disabled={portalActionFreelancerId === freelancer.id}
+                          onClick={() => void handleResendFreelancerPortalInvite(freelancer)}
+                          className="glass-button-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Reenviar
+                        </button>
+                      ) : null}
+
+                      {freelancer.portal_access?.invite_url ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleCopyFreelancerInviteLink(
+                              freelancer.portal_access?.invite_url || '',
+                              freelancer.name,
+                            )
+                          }
+                          className="glass-button-secondary"
+                        >
+                          <Copy className="w-4 h-4" />
+                          Copiar enlace
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
