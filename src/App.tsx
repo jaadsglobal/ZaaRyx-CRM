@@ -19,6 +19,7 @@ import {
   getRoleKey,
   sanitizeAccessibleSections,
 } from './permissions';
+import { getSupabaseBrowserClient, hasSupabaseBrowserAuth } from './lib/supabase';
 
 const Dashboard = lazy(() =>
   import('./components/Dashboard').then((module) => ({ default: module.Dashboard })),
@@ -150,6 +151,27 @@ const createInitialTwoFactorForm = (): TwoFactorFormState => ({
   code: '',
 });
 
+const GoogleIcon = ({ className = 'h-4 w-4' }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
+    <path
+      d="M21.8 12.23c0-.72-.06-1.25-.2-1.8H12.2v3.52h5.52c-.11.87-.7 2.18-2 3.06l-.02.12 2.9 2.2.2.02c1.83-1.65 2.9-4.08 2.9-7.12Z"
+      fill="#4285F4"
+    />
+    <path
+      d="M12.2 21.88c2.7 0 4.96-.87 6.62-2.35l-3.15-2.34c-.84.57-1.97.97-3.47.97-2.64 0-4.87-1.7-5.68-4.06l-.12.01-3.02 2.29-.04.11c1.65 3.19 5.04 5.37 8.86 5.37Z"
+      fill="#34A853"
+    />
+    <path
+      d="M6.52 14.1A5.8 5.8 0 0 1 6.18 12c0-.72.13-1.41.33-2.1l-.01-.14-3.06-2.32-.1.05A9.68 9.68 0 0 0 2.2 12c0 1.56.38 3.04 1.14 4.46l3.18-2.36Z"
+      fill="#FBBC05"
+    />
+    <path
+      d="M12.2 5.84c1.88 0 3.15.8 3.87 1.47l2.82-2.7C17.15 3.05 14.9 2.12 12.2 2.12c-3.82 0-7.21 2.17-8.86 5.37l3.17 2.37c.82-2.36 3.05-4.02 5.69-4.02Z"
+      fill="#EA4335"
+    />
+  </svg>
+);
+
 const isTwoFactorChallenge = (value: AuthFlowResponse): value is AuthTwoFactorChallenge =>
   'two_factor_required' in value && value.two_factor_required === true;
 
@@ -164,6 +186,14 @@ const getUrlTokenFromLocation = (key: string) => {
 
 const getInviteTokenFromLocation = () => getUrlTokenFromLocation('invite');
 const getResetTokenFromLocation = () => getUrlTokenFromLocation('reset');
+
+const getAuthReturnUrl = () => {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  return new URL(window.location.pathname, window.location.origin).toString();
+};
 
 const getResponseJson = async <T,>(response: Response): Promise<T> => {
   if (!response.ok) {
@@ -197,6 +227,66 @@ const getLoginErrorMessage = (error: unknown) => {
   }
 
   return 'No se pudo conectar con el servidor. Arranca la app con `npm run dev` o `npm run preview`.';
+};
+
+const getSupabaseLoginErrorMessage = (message: string) => {
+  const normalizedMessage = message.trim().toLowerCase();
+
+  if (normalizedMessage.includes('invalid login credentials')) {
+    return 'Credenciales inválidas. Revisa email y contraseña.';
+  }
+
+  if (normalizedMessage.includes('email not confirmed')) {
+    return 'Tu usuario existe en Supabase, pero el email todavía no está confirmado.';
+  }
+
+  if (normalizedMessage.includes('signup is disabled')) {
+    return 'El acceso por email y contraseña está desactivado en Supabase.';
+  }
+
+  return 'No se pudo iniciar sesión con Supabase.';
+};
+
+const getSupabaseOAuthErrorMessage = (message: string) => {
+  const normalizedMessage = message.trim().toLowerCase();
+
+  if (normalizedMessage.includes('provider is not enabled')) {
+    return 'Google login aún no está habilitado en tu proyecto de Supabase.';
+  }
+
+  if (normalizedMessage.includes('unsupported provider')) {
+    return 'Supabase no reconoce Google como proveedor activo en esta instancia.';
+  }
+
+  if (normalizedMessage.includes('redirect')) {
+    return 'La URL de retorno no está autorizada en Supabase Auth.';
+  }
+
+  return 'No se pudo iniciar el acceso con Google.';
+};
+
+const getSupabaseBridgeErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 403) {
+      return 'Esta cuenta necesita activarse dentro del CRM antes de poder entrar.';
+    }
+
+    if (error.status === 404) {
+      return 'El usuario existe en Supabase, pero no está dado de alta en el CRM.';
+    }
+
+    if (error.status === 409) {
+      return 'La cuenta del CRM ya está enlazada a otro usuario de Supabase.';
+    }
+
+    if (error.status === 503) {
+      return 'El backend no tiene Supabase configurado para aceptar sesiones.';
+    }
+
+    return getLoginErrorMessage(error);
+  }
+
+  return 'No se pudo completar el acceso entre Supabase y el CRM.';
 };
 
 const getActivationErrorMessage = (error: unknown) => {
@@ -291,6 +381,54 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [resetPreviewUrl, setResetPreviewUrl] = useState<string | null>(null);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+
+  const exchangeSupabaseSession = async (accessToken: string) => {
+    const response = await fetch('/api/auth/supabase/session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        access_token: accessToken,
+      }),
+    });
+
+    return getResponseJson<AuthFlowResponse>(response);
+  };
+
+  const maybeRestoreLocalSessionFromSupabase = async () => {
+    const supabase = getSupabaseBrowserClient();
+
+    if (!supabase) {
+      return null;
+    }
+
+    const { data, error } = await supabase.auth.getSession();
+
+    if (error || !data.session?.access_token) {
+      return null;
+    }
+
+    try {
+      return await exchangeSupabaseSession(data.session.access_token);
+    } catch (restoreError) {
+      if (restoreError instanceof ApiError && restoreError.status === 401) {
+        await supabase.auth.signOut();
+        return null;
+      }
+
+      if (
+        restoreError instanceof ApiError &&
+        [403, 404, 409].includes(restoreError.status)
+      ) {
+        setAuthMessage(getSupabaseBridgeErrorMessage(restoreError));
+        await supabase.auth.signOut();
+        return null;
+      }
+
+      throw restoreError;
+    }
+  };
   const [loginForm, setLoginForm] = useState<LoginFormState>(createInitialLoginForm());
   const [inviteToken, setInviteToken] = useState<string | null>(getInviteTokenFromLocation);
   const [inviteInfo, setInviteInfo] = useState<InviteActivationInfo | null>(null);
@@ -345,6 +483,13 @@ export default function App() {
       const response = await fetch('/api/auth/me');
 
       if (response.status === 401) {
+        const restoredSession = await maybeRestoreLocalSessionFromSupabase();
+
+        if (restoredSession) {
+          handleAuthFlowResponse(restoredSession);
+          return;
+        }
+
         setCurrentUser(null);
         return;
       }
@@ -533,15 +678,50 @@ export default function App() {
     setResetPreviewUrl(null);
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(loginForm),
-      });
+      const normalizedEmail = loginForm.email.trim();
+      let result: AuthFlowResponse;
 
-      const result = await getResponseJson<AuthFlowResponse>(response);
+      if (hasSupabaseBrowserAuth()) {
+        const supabase = getSupabaseBrowserClient();
+
+        if (!supabase) {
+          throw new Error('Supabase auth client is not available');
+        }
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password: loginForm.password,
+        });
+
+        if (error) {
+          setAuthMessage(getSupabaseLoginErrorMessage(error.message));
+          return;
+        }
+
+        if (!data.session?.access_token) {
+          setAuthMessage('Supabase no devolvió una sesión válida.');
+          return;
+        }
+
+        try {
+          result = await exchangeSupabaseSession(data.session.access_token);
+        } catch (bridgeError) {
+          await supabase.auth.signOut();
+          setAuthMessage(getSupabaseBridgeErrorMessage(bridgeError));
+          return;
+        }
+      } else {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(loginForm),
+        });
+
+        result = await getResponseJson<AuthFlowResponse>(response);
+      }
+
       handleAuthFlowResponse(result);
       setAuthMode('login');
       setLoginForm((currentForm) => ({
@@ -554,6 +734,39 @@ export default function App() {
     } finally {
       setAuthLoading(false);
     }
+  };
+
+  const handleGoogleLogin = () => {
+    void (async () => {
+      setAuthLoading(true);
+      setAuthMessage(null);
+      setResetPreviewUrl(null);
+
+      try {
+        const supabase = getSupabaseBrowserClient();
+
+        if (!supabase) {
+          setAuthMessage('Supabase Auth no está configurado en el navegador.');
+          return;
+        }
+
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: getAuthReturnUrl(),
+          },
+        });
+
+        if (error) {
+          setAuthMessage(getSupabaseOAuthErrorMessage(error.message));
+        }
+      } catch (error) {
+        console.error('Error starting Google login:', error);
+        setAuthMessage('No se pudo iniciar el acceso con Google.');
+      } finally {
+        setAuthLoading(false);
+      }
+    })();
   };
 
   const clearInviteMode = () => {
@@ -629,6 +842,8 @@ export default function App() {
 
   const handleLogout = () => {
     void (async () => {
+      const supabase = getSupabaseBrowserClient();
+
       try {
         await fetch('/api/auth/logout', {
           method: 'POST',
@@ -636,6 +851,12 @@ export default function App() {
       } catch (error) {
         console.error('Error logging out:', error);
       } finally {
+        if (supabase) {
+          await supabase.auth.signOut().catch((error) => {
+            console.error('Error logging out from Supabase:', error);
+          });
+        }
+
         setCurrentUser(null);
         setStats(null);
         setActiveTab('dashboard');
@@ -767,6 +988,13 @@ export default function App() {
   const isResetMode = Boolean(resetToken && resetInfo);
   const isInvalidResetMode = Boolean(resetToken && !resetInfo && !resetChecking);
   const isTwoFactorMode = Boolean(pendingTwoFactorChallenge);
+  const canUseGoogleLogin =
+    !isActivationMode &&
+    !isResetMode &&
+    !isInvalidResetMode &&
+    !isTwoFactorMode &&
+    authMode === 'login' &&
+    hasSupabaseBrowserAuth();
 
   const handleNavigate = (nextTab: string) => {
     if (!currentUser) {
@@ -1215,6 +1443,25 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {canUseGoogleLogin ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.22em] text-white/30">
+                  <div className="h-px flex-1 bg-white/10" />
+                  <span>o</span>
+                  <div className="h-px flex-1 bg-white/10" />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  disabled={authLoading}
+                  className="glass-button-secondary w-full justify-center disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <GoogleIcon className="h-4 w-4" />
+                  {authLoading ? 'Redirigiendo a Google...' : 'Continuar con Google'}
+                </button>
+              </div>
+            ) : null}
           </>
         )}
 

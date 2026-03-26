@@ -18,6 +18,14 @@ services:
         value: /data/zaaryx.db
       - key: APP_URL
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY
+        sync: false
       - key: MAIL_FROM
         sync: false
       - key: TRUST_PROXY

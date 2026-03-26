@@ -7,6 +7,7 @@ import type { Server as HttpServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
+import { createClient, type User as SupabaseUser } from "@supabase/supabase-js";
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { createTransport } from "nodemailer";
 import type { Transporter } from "nodemailer";
@@ -31,6 +32,80 @@ const resolveDatabasePath = (value?: string | null) => {
 
 const DATABASE_PATH = resolveDatabasePath(process.env.DATABASE_PATH);
 
+const getSupabaseProjectUrl = () =>
+  process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim() || "";
+
+const getSupabasePublishableKey = () =>
+  process.env.SUPABASE_ANON_KEY?.trim() ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY?.trim() ||
+  process.env.VITE_SUPABASE_ANON_KEY?.trim() ||
+  "";
+
+const isSupabaseAuthConfigured = () => Boolean(getSupabaseProjectUrl() && getSupabasePublishableKey());
+
+const createSupabaseAuthClient = () => {
+  const projectUrl = getSupabaseProjectUrl();
+  const publishableKey = getSupabasePublishableKey();
+
+  if (!projectUrl || !publishableKey) {
+    return null;
+  }
+
+  return createClient(projectUrl, publishableKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
+};
+
+const syncSupabasePasswordChange = async ({
+  email,
+  currentPassword,
+  nextPassword,
+}: {
+  email: string;
+  currentPassword: string;
+  nextPassword: string;
+}) => {
+  const supabase = createSupabaseAuthClient();
+
+  if (!supabase) {
+    return { synced: false, reason: "missing_config" } as const;
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password: currentPassword,
+  });
+
+  if (error || !data.user || !data.session) {
+    return {
+      synced: false,
+      reason: "invalid_current_password",
+      errorMessage: error?.message || null,
+    } as const;
+  }
+
+  const { data: updateData, error: updateError } = await supabase.auth.updateUser({
+    password: nextPassword,
+  });
+
+  if (updateError) {
+    return {
+      synced: false,
+      reason: "update_failed",
+      errorMessage: updateError.message,
+    } as const;
+  }
+
+  return {
+    synced: true,
+    supabaseUserId: updateData.user?.id || data.user.id,
+  } as const;
+};
+
 fs.mkdirSync(path.dirname(DATABASE_PATH), { recursive: true });
 
 const db = new Database(DATABASE_PATH);
@@ -47,6 +122,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    supabase_user_id TEXT,
     name TEXT NOT NULL,
     role TEXT NOT NULL,
     client_id INTEGER,
@@ -4472,6 +4548,10 @@ if (!userColumns.some((column) => column.name === "activation_token")) {
   db.exec("ALTER TABLE users ADD COLUMN activation_token TEXT");
 }
 
+if (!userColumns.some((column) => column.name === "supabase_user_id")) {
+  db.exec("ALTER TABLE users ADD COLUMN supabase_user_id TEXT");
+}
+
 if (!userColumns.some((column) => column.name === "invited_at")) {
   db.exec("ALTER TABLE users ADD COLUMN invited_at DATETIME");
 }
@@ -4888,52 +4968,39 @@ const getLeadAssignmentCandidatesForAgency = (agencyId: number) => {
   });
 };
 
+type FullUserRecord = {
+  id: number;
+  email: string;
+  password: string;
+  supabase_user_id: string | null;
+  name: string;
+  role: string;
+  client_id: number | null;
+  freelancer_id: number | null;
+  status: "online" | "meeting" | "offline";
+  access_status: UserAccessStatus | null;
+  activation_token: string | null;
+  invited_at: string | null;
+  activated_at: string | null;
+  two_factor_secret: string | null;
+  two_factor_pending_secret: string | null;
+  two_factor_enabled: number | null;
+  two_factor_backup_codes: string | null;
+  two_factor_confirmed_at: string | null;
+  agency_id: number | null;
+};
+
 const getUserRecordByEmailFull = (email: string) =>
   db.prepare("SELECT * FROM users WHERE lower(email) = lower(?)").get(email.trim()) as
-    | {
-        id: number;
-        email: string;
-        password: string;
-        name: string;
-        role: string;
-        client_id: number | null;
-        freelancer_id: number | null;
-        status: "online" | "meeting" | "offline";
-        access_status: UserAccessStatus | null;
-        activation_token: string | null;
-        invited_at: string | null;
-        activated_at: string | null;
-        two_factor_secret: string | null;
-        two_factor_pending_secret: string | null;
-        two_factor_enabled: number | null;
-        two_factor_backup_codes: string | null;
-        two_factor_confirmed_at: string | null;
-        agency_id: number | null;
-      }
+    | FullUserRecord
     | undefined;
 
 const getUserRecordByIdFull = (userId: number) =>
-  db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as
-    | {
-        id: number;
-        email: string;
-        password: string;
-        name: string;
-        role: string;
-        client_id: number | null;
-        freelancer_id: number | null;
-        status: "online" | "meeting" | "offline";
-        access_status: UserAccessStatus | null;
-        activation_token: string | null;
-        invited_at: string | null;
-        activated_at: string | null;
-        two_factor_secret: string | null;
-        two_factor_pending_secret: string | null;
-        two_factor_enabled: number | null;
-        two_factor_backup_codes: string | null;
-        two_factor_confirmed_at: string | null;
-        agency_id: number | null;
-      }
+  db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as FullUserRecord | undefined;
+
+const getUserRecordBySupabaseUserId = (supabaseUserId: string) =>
+  db.prepare("SELECT * FROM users WHERE supabase_user_id = ?").get(supabaseUserId.trim()) as
+    | FullUserRecord
     | undefined;
 
 const isAgencyOwnedRecord = (
@@ -4964,27 +5031,40 @@ const deleteOperationalArtifactsBySource = (
 
 const getUserRecordByActivationToken = (token: string) =>
   db.prepare("SELECT * FROM users WHERE activation_token = ?").get(token) as
-    | {
-        id: number;
-        email: string;
-        password: string;
-        name: string;
-        role: string;
-        client_id: number | null;
-        freelancer_id: number | null;
-        status: "online" | "meeting" | "offline";
-        access_status: UserAccessStatus | null;
-        activation_token: string | null;
-        invited_at: string | null;
-        activated_at: string | null;
-        two_factor_secret: string | null;
-        two_factor_pending_secret: string | null;
-        two_factor_enabled: number | null;
-        two_factor_backup_codes: string | null;
-        two_factor_confirmed_at: string | null;
-        agency_id: number | null;
-      }
+    | FullUserRecord
     | undefined;
+
+const resolveLocalUserForSupabaseIdentity = (supabaseUser: SupabaseUser) => {
+  const supabaseUserId = typeof supabaseUser.id === "string" ? supabaseUser.id.trim() : "";
+  const normalizedEmail =
+    typeof supabaseUser.email === "string" ? supabaseUser.email.trim().toLowerCase() : "";
+
+  if (!supabaseUserId || !normalizedEmail) {
+    return { error: "Supabase account is missing a stable id or email" } as const;
+  }
+
+  const linkedUser = getUserRecordBySupabaseUserId(supabaseUserId);
+
+  if (linkedUser) {
+    return { user: linkedUser } as const;
+  }
+
+  const emailUser = getUserRecordByEmailFull(normalizedEmail);
+
+  if (!emailUser) {
+    return { error: "Local CRM account not found for this Supabase user" } as const;
+  }
+
+  if (emailUser.supabase_user_id && emailUser.supabase_user_id !== supabaseUserId) {
+    return { error: "Local CRM account is already linked to another Supabase identity" } as const;
+  }
+
+  db.prepare("UPDATE users SET supabase_user_id = ? WHERE id = ?").run(supabaseUserId, emailUser.id);
+
+  return {
+    user: getUserRecordByIdFull(emailUser.id) || emailUser,
+  } as const;
+};
 
 const isExternalLinkedUser = (user: {
   role: string;
@@ -11870,6 +11950,125 @@ async function startServer() {
     );
   });
 
+  app.post("/api/auth/supabase/session", async (req, res) => {
+    const accessToken =
+      typeof req.body?.access_token === "string" ? req.body.access_token.trim() : "";
+    const requestIp = getRequestIp(req);
+    const userAgent = String(req.headers["user-agent"] || "Unknown");
+
+    if (!isSupabaseAuthConfigured()) {
+      return res.status(503).json({ error: "Supabase auth is not configured" });
+    }
+
+    if (!accessToken) {
+      return res.status(400).json({ error: "Supabase access token is required" });
+    }
+
+    const supabase = createSupabaseAuthClient();
+
+    if (!supabase) {
+      return res.status(503).json({ error: "Supabase auth is not configured" });
+    }
+
+    const { data, error } = await supabase.auth.getUser(accessToken);
+
+    if (error || !data.user) {
+      return res.status(401).json({ error: "Invalid Supabase session" });
+    }
+
+    const resolvedUser = resolveLocalUserForSupabaseIdentity(data.user);
+
+    if ("error" in resolvedUser) {
+      return res
+        .status(
+          resolvedUser.error.includes("linked to another Supabase identity") ? 409 : 404,
+        )
+        .json({ error: resolvedUser.error });
+    }
+
+    const user = resolvedUser.user;
+
+    if ((user.access_status || "active") !== "active") {
+      return res.status(403).json({ error: "Account activation required" });
+    }
+
+    const agencyId = user.agency_id;
+
+    if (!agencyId) {
+      return res.status(400).json({ error: "Agency not found" });
+    }
+
+    if (isUserTwoFactorEnabled(user)) {
+      const challenge = createTwoFactorChallengeForUser(user.id, agencyId, "login");
+
+      createAuditLog({
+        action: "auth.login_2fa_challenge",
+        entityType: "user",
+        entityId: user.id,
+        description: `${user.name} validó su sesión de Supabase y quedó pendiente del segundo factor.`,
+        userId: user.id,
+        actorName: user.name,
+        actorEmail: user.email,
+        agencyId,
+        metadata: {
+          provider: "supabase",
+          supabase_user_id: data.user.id,
+        },
+      });
+
+      return res.json(
+        createTwoFactorChallengeResponse({
+          user,
+          challengeToken: challenge.token,
+          expiresAt: challenge.expiresAt,
+        }),
+      );
+    }
+
+    const { token, durationMs } = createSessionForUser(user.id, agencyId);
+    const loggedAt = new Date().toISOString();
+
+    createAuditLog({
+      action: "auth.login",
+      entityType: "session",
+      entityId: user.id,
+      description: `${user.name} inició sesión desde Supabase.`,
+      userId: user.id,
+      actorName: user.name,
+      actorEmail: user.email,
+      agencyId,
+      metadata: {
+        role: user.role,
+        request_ip: requestIp,
+        provider: "supabase",
+        supabase_user_id: data.user.id,
+      },
+    });
+    triggerLoginAlertIfEnabled({
+      user,
+      agencyId,
+      requestIp,
+      userAgent,
+      loggedAt,
+      usedTwoFactor: false,
+    });
+
+    res.setHeader("Set-Cookie", createSessionCookie(token, durationMs, req));
+    res.json(
+      toAuthUser({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        status: user.status,
+        agency_id: user.agency_id,
+        client_id: user.client_id,
+        freelancer_id: user.freelancer_id,
+        two_factor_enabled: user.two_factor_enabled,
+      }),
+    );
+  });
+
   app.post("/api/auth/login", (req, res) => {
     const { email, password } = req.body ?? {};
     const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
@@ -12633,7 +12832,7 @@ async function startServer() {
     res.json({ revoked: true });
   });
 
-  app.post("/api/auth/password/change", (req, res) => {
+  app.post("/api/auth/password/change", async (req, res) => {
     const authUser = res.locals.authUser as AuthUser | undefined;
     const currentPassword = req.body?.current_password;
     const nextPassword = req.body?.new_password;
@@ -12662,12 +12861,47 @@ async function startServer() {
       return res.status(400).json({ error: "Agency not found" });
     }
 
-    if (!verifyPassword(currentPassword, user.password)) {
-      return res.status(401).json({ error: "Current password is incorrect" });
+    if (currentPassword === nextPassword) {
+      return res.status(400).json({ error: "New password must be different from the current one" });
     }
 
-    if (verifyPassword(nextPassword, user.password)) {
-      return res.status(400).json({ error: "New password must be different from the current one" });
+    if (isSupabaseAuthConfigured()) {
+      const supabasePasswordChange = await syncSupabasePasswordChange({
+        email: user.email,
+        currentPassword,
+        nextPassword,
+      });
+
+      if (!supabasePasswordChange.synced) {
+        if (supabasePasswordChange.reason === "invalid_current_password") {
+          return res.status(401).json({ error: "Current password is incorrect" });
+        }
+
+        console.error("Error updating password in Supabase", {
+          email: user.email,
+          reason: supabasePasswordChange.reason,
+          detail: supabasePasswordChange.errorMessage || null,
+        });
+        return res.status(502).json({ error: "Could not update password in Supabase" });
+      }
+
+      if (
+        supabasePasswordChange.supabaseUserId &&
+        user.supabase_user_id !== supabasePasswordChange.supabaseUserId
+      ) {
+        db.prepare("UPDATE users SET supabase_user_id = ? WHERE id = ?").run(
+          supabasePasswordChange.supabaseUserId,
+          user.id,
+        );
+      }
+    } else {
+      if (!verifyPassword(currentPassword, user.password)) {
+        return res.status(401).json({ error: "Current password is incorrect" });
+      }
+
+      if (verifyPassword(nextPassword, user.password)) {
+        return res.status(400).json({ error: "New password must be different from the current one" });
+      }
     }
 
     db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashPassword(nextPassword), user.id);
